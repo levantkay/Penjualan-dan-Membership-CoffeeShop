@@ -76,7 +76,7 @@ async function loadAll() {
       db.from('products').select('*').order('category').order('name'),
       db.from('members').select('*').order('joined_at', { ascending:false }),
       db.from('sales').select('id, receipt_no, sold_at, member_id, subtotal, discount_pct, discount_amount, total, payment_method').order('sold_at', { ascending:false }).limit(150),
-      db.from('membership_settings').select('monthly_fee, reactivation_fee').eq('id', 1).single()
+      db.rpc('get_membership_fees').single()
     ]);
     if (pErr) throw pErr;
     if (mErr) throw mErr;
@@ -135,7 +135,7 @@ function renderPOS() {
 
   const items = state.products.filter(p => p.is_active && (state.activeCategory === 'All' || p.category === state.activeCategory));
   document.querySelector('#pos-products').innerHTML = items.map(p => `
-    <button class="product-card" data-id="${p.id}"><span class="product-thumb">${p.category === 'Pastry' ? '🥐' : p.category === 'Non-Coffee' ? '🍵' : '☕'}</span><div><b>${escapeHtml(p.name)}</b><span>${escapeHtml(p.category)}</span><strong>${money(p.price)}</strong></div></button>
+    <button class="product-card" data-id="${p.id}"><span class="product-thumb">${p.category === 'Snack' ? '🍿' : p.category === 'Pastry' ? '🥐' : p.category === 'Non-Coffee' ? '🍵' : '☕'}</span><div><b>${escapeHtml(p.name)}</b><span>${escapeHtml(p.category)}</span><strong>${money(p.price)}</strong></div></button>
   `).join('');
   document.querySelectorAll('.product-card').forEach(btn => btn.addEventListener('click', () => addToCart(btn.dataset.id)));
 }
@@ -422,7 +422,7 @@ async function deactivateMember(memberId) {
 
 async function deleteMember(memberId) {
   const member = state.members.find(item => item.id === memberId);
-  if (!member || !window.confirm(`Hapus membership ${member.membership_number}? Membership dengan riwayat transaksi atau pembayaran tidak dapat dihapus.`)) return;
+  if (!member || !window.confirm(`Hapus membership ${member.membership_number}? Riwayat penjualan tetap menghalangi penghapusan, dan iuran yang masih aktif harus menunggu sampai masa berlakunya habis.`)) return;
   if (!configured) { toast('Hubungkan Supabase untuk menghapus membership.', 'warn'); return; }
   try {
     const { error } = await db.rpc('delete_membership', { p_member_id:memberId });
