@@ -13,6 +13,9 @@ create table if not exists public.members (
   joined_at date not null default current_date,
   status varchar(10) not null default 'ACTIVE'
     check (status in ('ACTIVE', 'INACTIVE')),
+  paid_through date,
+  membership_payments jsonb not null default '[]'::jsonb
+    check (jsonb_typeof(membership_payments) = 'array'),
   created_at timestamptz not null default now()
 );
 
@@ -145,47 +148,104 @@ on conflict (membership_number) do update set
 alter table public.members
   add column if not exists paid_through date;
 
-create table if not exists public.membership_settings (
-  id smallint primary key default 1 check (id = 1),
-  monthly_fee numeric(12,2) not null default 35000 check (monthly_fee >= 0),
-  reactivation_fee numeric(12,2) not null default 10000 check (reactivation_fee >= 0),
-  updated_at timestamptz not null default now()
-);
+alter table public.members
+  add column if not exists membership_payments jsonb not null default '[]'::jsonb
+    check (jsonb_typeof(membership_payments) = 'array');
 
-insert into public.membership_settings (id, monthly_fee, reactivation_fee)
-values (1, 35000, 10000)
-on conflict (id) do nothing;
+alter table public.sales
+  add column if not exists transaction_type varchar(20) not null default 'SALE'
+    check (transaction_type in ('SALE', 'MEMBERSHIP')),
+  add column if not exists membership_payment_type varchar(20)
+    check (membership_payment_type in ('NEW', 'RENEWAL', 'REACTIVATION')),
+  add column if not exists subscription_fee numeric(12,2) not null default 0 check (subscription_fee >= 0),
+  add column if not exists reactivation_fee numeric(12,2) not null default 0 check (reactivation_fee >= 0),
+  add column if not exists coverage_start date,
+  add column if not exists coverage_end date;
 
-create table if not exists public.membership_payments (
-  id uuid primary key default gen_random_uuid(),
-  receipt_no varchar(30) not null unique,
-  member_id uuid not null references public.members(id) on delete restrict,
-  payment_type varchar(20) not null check (payment_type in ('NEW', 'RENEWAL', 'REACTIVATION')),
-  subscription_fee numeric(12,2) not null check (subscription_fee >= 0),
-  reactivation_fee numeric(12,2) not null default 0 check (reactivation_fee >= 0),
-  total_amount numeric(12,2) generated always as (subscription_fee + reactivation_fee) stored,
-  payment_method varchar(20) not null check (payment_method in ('CASH','QRIS','DEBIT','EWALLET')),
-  coverage_start date not null,
-  coverage_end date not null,
-  paid_at timestamptz not null default now(),
-  check (coverage_end >= coverage_start)
-);
+-- Move existing billing records into members before removing legacy storage.
+do $$
+declare
+  v_monthly_fee numeric(12,2) := 35000;
+  v_reactivation_fee numeric(12,2) := 10000;
+  v_payment record;
+begin
+  if to_regclass('public.membership_settings') is not null then
+    execute 'select monthly_fee, reactivation_fee from public.membership_settings where id = 1'
+      into v_monthly_fee, v_reactivation_fee;
+  elsif to_regprocedure('public.get_membership_fees()') is not null then
+    select f.monthly_fee, f.reactivation_fee
+      into v_monthly_fee, v_reactivation_fee
+    from public.get_membership_fees() f;
+  end if;
 
-create index if not exists idx_membership_payments_member_paid_at
-  on public.membership_payments(member_id, paid_at desc);
+  if to_regclass('public.membership_payments') is not null then
+    for v_payment in execute
+      'select receipt_no, member_id, payment_type, subscription_fee, reactivation_fee, payment_method, coverage_start, coverage_end, paid_at from public.membership_payments'
+    loop
+      update public.members m
+      set membership_payments = m.membership_payments || jsonb_build_array(jsonb_build_object(
+        'receipt_no', v_payment.receipt_no,
+        'payment_type', v_payment.payment_type,
+        'subscription_fee', v_payment.subscription_fee,
+        'reactivation_fee', v_payment.reactivation_fee,
+        'total_amount', v_payment.subscription_fee + v_payment.reactivation_fee,
+        'payment_method', v_payment.payment_method,
+        'coverage_start', v_payment.coverage_start,
+        'coverage_end', v_payment.coverage_end,
+        'paid_at', v_payment.paid_at
+      ))
+      where m.id = v_payment.member_id
+        and not (m.membership_payments @> jsonb_build_array(jsonb_build_object('receipt_no', v_payment.receipt_no)));
+    end loop;
+    execute 'drop table public.membership_payments';
+  end if;
 
-alter table public.membership_settings enable row level security;
-alter table public.membership_payments enable row level security;
+  for v_payment in
+    select receipt_no, member_id, membership_payment_type as payment_type,
+           subscription_fee, reactivation_fee, payment_method,
+           coverage_start, coverage_end, sold_at as paid_at
+    from public.sales
+    where transaction_type = 'MEMBERSHIP'
+  loop
+    update public.members m
+    set membership_payments = m.membership_payments || jsonb_build_array(jsonb_build_object(
+      'receipt_no', v_payment.receipt_no,
+      'payment_type', v_payment.payment_type,
+      'subscription_fee', v_payment.subscription_fee,
+      'reactivation_fee', v_payment.reactivation_fee,
+      'total_amount', v_payment.subscription_fee + v_payment.reactivation_fee,
+      'payment_method', v_payment.payment_method,
+      'coverage_start', v_payment.coverage_start,
+      'coverage_end', v_payment.coverage_end,
+      'paid_at', v_payment.paid_at
+    ))
+    where m.id = v_payment.member_id
+      and not (m.membership_payments @> jsonb_build_array(jsonb_build_object('receipt_no', v_payment.receipt_no)));
+  end loop;
 
-drop policy if exists "demo membership settings read" on public.membership_settings;
-create policy "demo membership settings read" on public.membership_settings
-  for select using (true);
+  delete from public.sales where transaction_type = 'MEMBERSHIP';
 
-drop policy if exists "demo membership payments read" on public.membership_payments;
-create policy "demo membership payments read" on public.membership_payments
-  for select using (true);
+  if to_regclass('public.membership_settings') is not null then
+    execute 'drop table public.membership_settings';
+  end if;
 
-grant select on public.membership_settings, public.membership_payments to anon, authenticated;
+  execute format(
+    'create or replace function public.get_membership_fees() returns table(monthly_fee numeric, reactivation_fee numeric) language sql immutable as %L',
+    format('select %s::numeric, %s::numeric', v_monthly_fee, v_reactivation_fee)
+  );
+end;
+$$;
+
+alter table public.sales
+  drop constraint if exists sales_coverage_period_check,
+  drop column if exists transaction_type,
+  drop column if exists membership_payment_type,
+  drop column if exists subscription_fee,
+  drop column if exists reactivation_fee,
+  drop column if exists coverage_start,
+  drop column if exists coverage_end;
+
+grant execute on function public.get_membership_fees() to anon, authenticated;
 
 create or replace function public._record_membership_payment(
   p_member_id uuid,
@@ -229,14 +289,9 @@ begin
     raise exception 'Reaktivasi hanya dapat dilakukan untuk member inactive.';
   end if;
 
-  select s.monthly_fee, s.reactivation_fee
+  select f.monthly_fee, f.reactivation_fee
     into v_monthly_fee, v_reactivation_fee
-  from public.membership_settings s
-  where s.id = 1;
-
-  if not found then
-    raise exception 'Pengaturan biaya membership belum tersedia.';
-  end if;
+  from public.get_membership_fees() f;
 
   if p_payment_type <> 'REACTIVATION' then
     v_reactivation_fee := 0;
@@ -249,16 +304,19 @@ begin
   v_coverage_end := (v_coverage_start + interval '1 month' - interval '1 day')::date;
   v_receipt_no := 'MBR-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 12));
 
-  insert into public.membership_payments (
-    receipt_no, member_id, payment_type, subscription_fee, reactivation_fee,
-    payment_method, coverage_start, coverage_end
-  ) values (
-    v_receipt_no, p_member_id, p_payment_type, v_monthly_fee, v_reactivation_fee,
-    upper(p_payment_method), v_coverage_start, v_coverage_end
-  );
-
   update public.members
-  set paid_through = v_coverage_end
+  set paid_through = v_coverage_end,
+      membership_payments = membership_payments || jsonb_build_array(jsonb_build_object(
+        'receipt_no', v_receipt_no,
+        'payment_type', p_payment_type,
+        'subscription_fee', v_monthly_fee,
+        'reactivation_fee', v_reactivation_fee,
+        'total_amount', v_monthly_fee + v_reactivation_fee,
+        'payment_method', upper(p_payment_method),
+        'coverage_start', v_coverage_start,
+        'coverage_end', v_coverage_end,
+        'paid_at', now()
+      ))
   where id = p_member_id;
 
   return v_coverage_end;
@@ -529,3 +587,176 @@ revoke all on function public.set_product_availability(uuid, boolean) from publi
 grant execute on function public.revise_sale(uuid, uuid, text, jsonb) to anon, authenticated;
 grant execute on function public.delete_sale(uuid) to anon, authenticated;
 grant execute on function public.set_product_availability(uuid, boolean) to anon, authenticated;
+
+create or replace function public.update_membership_details(
+  p_member_id uuid,
+  p_membership_number text,
+  p_joined_at date
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_membership_number text := upper(trim(coalesce(p_membership_number, '')));
+begin
+  if v_membership_number = '' then
+    raise exception 'Nomor membership wajib diisi.';
+  end if;
+
+  if char_length(v_membership_number) > 20 then
+    raise exception 'Nomor membership maksimal 20 karakter.';
+  end if;
+
+  if p_joined_at is null then
+    raise exception 'Tanggal bergabung wajib diisi.';
+  end if;
+
+  update public.members
+  set membership_number = v_membership_number,
+      joined_at = p_joined_at
+  where id = p_member_id;
+
+  if not found then
+    raise exception 'Membership tidak ditemukan.';
+  end if;
+end;
+$$;
+
+create or replace function public.update_product_details(
+  p_product_id uuid,
+  p_sku text,
+  p_name text,
+  p_category text,
+  p_price numeric
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_sku text := upper(trim(coalesce(p_sku, '')));
+  v_name text := trim(coalesce(p_name, ''));
+  v_category text := trim(coalesce(p_category, ''));
+begin
+  if v_sku = '' or char_length(v_sku) > 30 then
+    raise exception 'SKU wajib diisi dan maksimal 30 karakter.';
+  end if;
+
+  if v_name = '' or char_length(v_name) > 100 then
+    raise exception 'Nama produk wajib diisi dan maksimal 100 karakter.';
+  end if;
+
+  if v_category = '' or char_length(v_category) > 30 then
+    raise exception 'Kategori wajib diisi dan maksimal 30 karakter.';
+  end if;
+
+  if p_price is null or p_price < 0 then
+    raise exception 'Harga harus bernilai nol atau lebih.';
+  end if;
+
+  update public.products
+  set sku = v_sku,
+      name = v_name,
+      category = v_category,
+      price = p_price
+  where id = p_product_id;
+
+  if not found then
+    raise exception 'Produk tidak ditemukan.';
+  end if;
+end;
+$$;
+
+create or replace function public.delete_membership(p_member_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  perform 1 from public.members where id = p_member_id for update;
+  if not found then
+    raise exception 'Membership tidak ditemukan.';
+  end if;
+
+  if exists (select 1 from public.sales where member_id = p_member_id) then
+    raise exception 'Membership memiliki riwayat transaksi dan tidak dapat dihapus. Nonaktifkan membership sebagai gantinya.';
+  end if;
+
+  if exists (
+    select 1 from public.members
+    where id = p_member_id
+      and jsonb_array_length(membership_payments) > 0
+      and (paid_through is null or paid_through >= current_date)
+  ) then
+    raise exception 'Membership masih memiliki masa iuran aktif dan belum dapat dihapus.';
+  end if;
+
+  delete from public.members where id = p_member_id;
+  if not found then
+    raise exception 'Membership tidak ditemukan.';
+  end if;
+end;
+$$;
+
+create or replace function public.delete_product(p_product_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if exists (select 1 from public.sale_items where product_id = p_product_id) then
+    raise exception 'Produk memiliki riwayat transaksi dan tidak dapat dihapus. Tandai non-available sebagai gantinya.';
+  end if;
+
+  delete from public.products where id = p_product_id;
+  if not found then
+    raise exception 'Produk tidak ditemukan.';
+  end if;
+end;
+$$;
+
+revoke all on function public.update_membership_details(uuid, text, date) from public;
+revoke all on function public.update_product_details(uuid, text, text, text, numeric) from public;
+revoke all on function public.delete_membership(uuid) from public;
+revoke all on function public.delete_product(uuid) from public;
+grant execute on function public.update_membership_details(uuid, text, date) to anon, authenticated;
+grant execute on function public.update_product_details(uuid, text, text, text, numeric) to anon, authenticated;
+grant execute on function public.delete_membership(uuid) to anon, authenticated;
+grant execute on function public.delete_product(uuid) to anon, authenticated;
+
+create or replace function public.delete_membership(p_member_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  perform 1 from public.members where id = p_member_id for update;
+  if not found then
+    raise exception 'Membership tidak ditemukan.';
+  end if;
+
+  if exists (select 1 from public.sales where member_id = p_member_id) then
+    raise exception 'Membership memiliki riwayat transaksi dan tidak dapat dihapus. Nonaktifkan membership sebagai gantinya.';
+  end if;
+
+  if exists (
+    select 1 from public.members
+    where id = p_member_id
+      and jsonb_array_length(membership_payments) > 0
+      and (paid_through is null or paid_through >= current_date)
+  ) then
+    raise exception 'Membership masih memiliki masa iuran aktif dan belum dapat dihapus.';
+  end if;
+
+  delete from public.members where id = p_member_id;
+  if not found then
+    raise exception 'Membership tidak ditemukan.';
+  end if;
+end;
+$$;
