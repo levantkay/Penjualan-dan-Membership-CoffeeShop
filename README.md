@@ -1,6 +1,19 @@
 # Brew & Benefits — Coffee Shop Sales + Membership System
 
 Sistem informasi akuntansi mini untuk coffee shop yang memadukan **penjualan dasar (POS)** dan **membership berbasis nomor anonim**.
+* **Demo aplikasi:** [Buka Brew & Benefits]((https://levantkay.github.io/Penjualan-dan-Membership-CoffeeShop/))
+
+## Identitas tugas
+
+| Keterangan | Detail |
+|---|---|
+| Nama | Marita Widya Ratnasari |
+| NIM | 12030124130102 |
+| Mata Kuliah | Pengkodean dan Pemrograman |
+| Kelas | D |
+| Dosen Pengampu | Dr. Totok Dewayanto, S.E., M.Si., Akt. |
+
+**Disusun untuk memenuhi Tugas Project UTS Pengkodean dan Pemrograman.**
 
 ## Konsep utama
 - Penjualan: pilih produk, masukkan membership (opsional), hitung diskon otomatis, pilih pembayaran, simpan transaksi.
