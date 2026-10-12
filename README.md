@@ -1,7 +1,7 @@
 # Brew & Benefits — Coffee Shop Sales + Membership System
 
 Sistem informasi akuntansi mini untuk coffee shop yang memadukan **penjualan dasar (POS)** dan **membership berbasis nomor anonim**.
-* **Demo aplikasi:** [Buka Brew & Benefits]((https://levantkay.github.io/Penjualan-dan-Membership-CoffeeShop/))
+* **Demo aplikasi:** [Buka Brew & Benefits](https://levantkay.github.io/Penjualan-dan-Membership-CoffeeShop/)
 
 ## Identitas tugas
 
