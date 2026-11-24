@@ -48,6 +48,10 @@ const state = {
   editingMemberId: null,
   editingProductId: null,
   accountingEntries: [],
+  journalFilter: 'ALL',
+  journalQueryId: 0,
+  journalLoading: false,
+  journalError: null,
   accountingReady: false,
   accountingError: null,
   revenueEntries: [],
@@ -149,6 +153,26 @@ document.querySelectorAll('[data-transaction-filter]').forEach(button => button.
   renderSalesHistory();
 }));
 document.querySelectorAll('[data-accounting-tab]').forEach(button => button.addEventListener('click', () => showAccountingPane(button.dataset.accountingTab)));
+document.querySelector('#journal-period').addEventListener('change', () => {
+  if (document.querySelector('#journal-period').value !== 'custom') setJournalReportingPeriod();
+  applyJournalFilters();
+});
+['#journal-date-from', '#journal-date-to'].forEach(selector => {
+  document.querySelector(selector).addEventListener('change', () => {
+    document.querySelector('#journal-period').value = 'custom';
+    applyJournalFilters();
+  });
+});
+document.querySelector('#apply-journal-filters').addEventListener('click', applyJournalFilters);
+document.querySelectorAll('[data-journal-filter]').forEach(button => button.addEventListener('click', () => {
+  state.journalFilter = button.dataset.journalFilter;
+  document.querySelectorAll('[data-journal-filter]').forEach(filterButton => {
+    const selected = filterButton.dataset.journalFilter === state.journalFilter;
+    filterButton.classList.toggle('active', selected);
+    filterButton.setAttribute('aria-pressed', String(selected));
+  });
+  applyJournalFilters();
+}));
 document.querySelector('#revenue-period').addEventListener('change', () => {
   if (document.querySelector('#revenue-period').value !== 'custom') setRevenueReportPeriod();
   renderRevenueReport();
@@ -254,29 +278,49 @@ async function loadSalesHistory() {
 async function loadAccountingData() {
   if (!configured) {
     state.accountingReady = false;
+    state.journalLoading = false;
+    state.journalError = null;
     state.accountingError = 'Hubungkan Supabase dan jalankan backend/accounting_migration.sql untuk menggunakan Accounting & Finance.';
     renderAccounting();
     return;
   }
+  state.journalQueryId += 1;
+  state.accountingReady = false;
+  state.journalLoading = true;
+  state.journalError = null;
+  renderJournal();
   try {
-    state.accountingEntries = await loadJournalEntries();
+    ensureJournalReportingPeriod();
+    const { from, to } = journalDateRange();
+    state.accountingEntries = await loadJournalEntries(from, to, state.journalFilter);
     state.accountingReady = true;
     state.accountingError = null;
+    state.journalError = null;
   } catch (err) {
     console.error(err);
     state.accountingReady = false;
     state.accountingEntries = [];
+    state.journalError = null;
     state.accountingError = `Accounting database belum siap. Jalankan backend/accounting_migration.sql. (${err.message})`;
   }
+  state.journalLoading = false;
   renderAccounting();
 }
 
-async function loadJournalEntries() {
+async function loadJournalEntries(from, to, filter) {
   const pageSize = 500;
   const entries = [];
+  const sourceTypes = filter === 'ALL' ? ['SALE', 'MEMBERSHIP'] : [filter];
+  // Include adjacent stored dates, then apply the exact Asia/Jakarta source-date range in renderJournal.
+  const queryFrom = shiftJournalDate(from, -1);
+  const queryTo = shiftJournalDate(to, 1);
   for (let offset = 0; ; offset += pageSize) {
     const { data, error } = await db.from('journal_entries')
       .select('id,journal_no,entry_date,source_type,source_reference,description,status,journal_lines(id,account_id,description,debit,credit,chart_of_accounts(account_code,account_name,account_type,system_role))')
+      .eq('status', 'POSTED')
+      .in('source_type', sourceTypes)
+      .gte('entry_date', queryFrom)
+      .lte('entry_date', queryTo)
       .order('entry_date', { ascending:false })
       .order('journal_no', { ascending:false })
       .range(offset, offset + pageSize - 1);
@@ -354,20 +398,191 @@ function journalTransactionDate(entry) {
   return entry.entry_date;
 }
 
+function journalIsoDate(date) {
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+}
+
+function journalBusinessToday() {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone:BUSINESS_TIME_ZONE,
+    year:'numeric',
+    month:'2-digit',
+    day:'2-digit'
+  }).formatToParts(new Date()).reduce((values, part) => {
+    values[part.type] = part.value;
+    return values;
+  }, {});
+  return new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day)));
+}
+
+function journalPeriodDates(period) {
+  const today = journalBusinessToday();
+  const year = today.getUTCFullYear();
+  const month = today.getUTCMonth();
+  const day = today.getUTCDate();
+  let start;
+  let end;
+  if (period === 'daily') {
+    start = new Date(Date.UTC(year, month, day));
+    end = new Date(Date.UTC(year, month, day));
+  } else if (period === 'weekly') {
+    const mondayOffset = (today.getUTCDay() + 6) % 7;
+    start = new Date(Date.UTC(year, month, day - mondayOffset));
+    end = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), start.getUTCDate() + 6));
+  } else if (period === 'yearly') {
+    start = new Date(Date.UTC(year, 0, 1));
+    end = new Date(Date.UTC(year, 11, 31));
+  } else {
+    start = new Date(Date.UTC(year, month, 1));
+    end = new Date(Date.UTC(year, month + 1, 0));
+  }
+  return { from:journalIsoDate(start), to:journalIsoDate(end) };
+}
+
+function setJournalReportingPeriod() {
+  const range = journalPeriodDates(document.querySelector('#journal-period').value);
+  document.querySelector('#journal-date-from').value = range.from;
+  document.querySelector('#journal-date-to').value = range.to;
+}
+
+function ensureJournalReportingPeriod() {
+  const from = document.querySelector('#journal-date-from');
+  const to = document.querySelector('#journal-date-to');
+  if (!from.value || !to.value) {
+    const period = document.querySelector('#journal-period');
+    if (period.value === 'custom') period.value = 'monthly';
+    setJournalReportingPeriod();
+  }
+}
+
+function journalDateRange() {
+  return {
+    from:document.querySelector('#journal-date-from').value,
+    to:document.querySelector('#journal-date-to').value
+  };
+}
+
+function shiftJournalDate(value, days) {
+  const [year, month, day] = value.split('-').map(Number);
+  return journalIsoDate(new Date(Date.UTC(year, month - 1, day + days)));
+}
+
+function journalDateKey(value) {
+  const date = dateValue(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone:BUSINESS_TIME_ZONE,
+    year:'numeric',
+    month:'2-digit',
+    day:'2-digit'
+  }).formatToParts(date).reduce((values, part) => {
+    values[part.type] = part.value;
+    return values;
+  }, {});
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+async function applyJournalFilters() {
+  ensureJournalReportingPeriod();
+  const { from, to } = journalDateRange();
+  const requestId = ++state.journalQueryId;
+  state.journalError = null;
+  if (!from || !to) {
+    state.accountingEntries = [];
+    state.journalError = 'Select both a start date and an end date.';
+    state.journalLoading = false;
+    renderJournal();
+    return;
+  }
+  if (from > to) {
+    state.accountingEntries = [];
+    state.journalError = 'The start date must be on or before the end date.';
+    state.journalLoading = false;
+    renderJournal();
+    return;
+  }
+  if (!state.accountingReady) {
+    state.journalLoading = false;
+    renderJournal();
+    return;
+  }
+
+  state.journalLoading = true;
+  renderJournal();
+  try {
+    const entries = await loadJournalEntries(from, to, state.journalFilter);
+    if (requestId !== state.journalQueryId) return;
+    state.accountingEntries = entries;
+  } catch (err) {
+    if (requestId !== state.journalQueryId) return;
+    console.error(err);
+    state.accountingEntries = [];
+    state.journalError = `Unable to load General Journal: ${err.message}`;
+  } finally {
+    if (requestId === state.journalQueryId) {
+      state.journalLoading = false;
+      renderJournal();
+    }
+  }
+}
+
 function renderJournal() {
-  const entries = state.accountingEntries.filter(entry => entry.status === 'POSTED');
+  ensureJournalReportingPeriod();
+  const { from, to } = journalDateRange();
+  const label = document.querySelector('#journal-period-label');
+  const periodLabels = { daily:'Daily', weekly:'Weekly', monthly:'Monthly', yearly:'Yearly', custom:'Custom Range' };
+  const filterLabels = { ALL:'All Transactions', SALE:'Sales', MEMBERSHIP:'Membership' };
+  const period = document.querySelector('#journal-period').value;
+  const periodDescription = `${periodLabels[period]} · ${from && to ? `${dateFmt(from)} – ${dateFmt(to)}` : ''} · ${filterLabels[state.journalFilter]}`;
+  const filtersDisabled = !state.accountingReady;
+  document.querySelector('#journal-period').disabled = filtersDisabled;
+  document.querySelector('#journal-date-from').disabled = filtersDisabled;
+  document.querySelector('#journal-date-to').disabled = filtersDisabled;
+  document.querySelector('#apply-journal-filters').disabled = filtersDisabled;
+  document.querySelectorAll('[data-journal-filter]').forEach(button => { button.disabled = filtersDisabled; });
+
+  const renderEmpty = message => {
+    document.querySelector('#journal-body').innerHTML = `<tr><td colspan="7" class="empty-cell">${escapeHtml(message)}</td></tr>`;
+    document.querySelector('#journal-total-debit').textContent = money(0);
+    document.querySelector('#journal-total-credit').textContent = money(0);
+  };
+  if (state.journalError) {
+    label.textContent = state.journalError;
+    renderEmpty(state.journalError);
+    return;
+  }
+  if (!state.accountingReady) {
+    label.textContent = state.accountingError || periodDescription;
+    renderEmpty('Accounting data is unavailable.');
+    return;
+  }
+  if (!from || !to || from > to) {
+    label.textContent = !from || !to ? 'Select both a start date and an end date.' : 'The start date must be on or before the end date.';
+    renderEmpty(label.textContent);
+    return;
+  }
+  label.textContent = `${periodDescription}${state.journalLoading ? ' · Loading…' : ''}`;
+  const entries = state.accountingEntries
+    .filter(entry => entry.status === 'POSTED' &&
+      (state.journalFilter === 'ALL' || entry.source_type === state.journalFilter))
+    .map(entry => {
+      const transactionDate = journalTransactionDate(entry);
+      return { entry, transactionDate, dateKey:journalDateKey(transactionDate) };
+    })
+    .filter(entry => entry.dateKey >= from && entry.dateKey <= to)
+    .sort((left, right) => right.dateKey.localeCompare(left.dateKey));
   const rows = [];
   let totalDebit = 0;
   let totalCredit = 0;
-  entries.forEach(entry => {
+  entries.forEach(({ entry, transactionDate }) => {
     (entry.journal_lines || []).forEach(line => {
       const account = journalLineAccount(line) || {};
       totalDebit += Number(line.debit || 0);
       totalCredit += Number(line.credit || 0);
-      rows.push(`<tr><td><span class="mono">${escapeHtml(entry.journal_no)}</span></td><td>${dateFmt(journalTransactionDate(entry))}</td><td><span class="mono">${escapeHtml(entry.source_reference)}</span><br><small>${escapeHtml(entry.source_type)}</small></td><td>${escapeHtml(account.account_code || '')} · ${escapeHtml(account.account_name || 'Account unavailable')}</td><td>${escapeHtml(line.description || entry.description || '')}</td><td>${Number(line.debit) ? money(line.debit) : '—'}</td><td>${Number(line.credit) ? money(line.credit) : '—'}</td></tr>`);
+      rows.push(`<tr><td><span class="mono">${escapeHtml(entry.journal_no)}</span></td><td>${dateFmt(transactionDate)}</td><td><span class="mono">${escapeHtml(entry.source_reference)}</span><br><small>${escapeHtml(entry.source_type)}</small></td><td>${escapeHtml(account.account_code || '')} · ${escapeHtml(account.account_name || 'Account unavailable')}</td><td>${escapeHtml(line.description || entry.description || '')}</td><td>${Number(line.debit) ? money(line.debit) : '—'}</td><td>${Number(line.credit) ? money(line.credit) : '—'}</td></tr>`);
     });
   });
-  document.querySelector('#journal-body').innerHTML = rows.join('') || '<tr><td colspan="7" class="empty-cell">No journal entries for the selected database.</td></tr>';
+  document.querySelector('#journal-body').innerHTML = rows.join('') || '<tr><td colspan="7" class="empty-cell">No journal entries match the selected filters.</td></tr>';
   document.querySelector('#journal-total-debit').textContent = money(totalDebit);
   document.querySelector('#journal-total-credit').textContent = money(totalCredit);
 }
