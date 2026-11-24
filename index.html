@@ -178,7 +178,18 @@
       <div class="accounting-pane active" id="accounting-pane-journal" role="tabpanel">
         <article class="glass panel">
           <div class="panel-heading">
-          <div><p class="eyebrow">READ-ONLY POSTINGS</p><h3>General Journal</h3></div>
+          <div><p class="eyebrow">READ-ONLY POSTINGS</p><h3>General Journal</h3><p class="micro-copy" id="journal-period-label"></p></div>
+          </div>
+          <div class="accounting-report-filters">
+          <label class="field-label">Reporting Period<select class="input-control" id="journal-period"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly" selected>Monthly</option><option value="yearly">Yearly</option><option value="custom">Custom Range</option></select></label>
+          <label class="field-label">From<input class="input-control" id="journal-date-from" type="date"></label>
+          <label class="field-label">To<input class="input-control" id="journal-date-to" type="date"></label>
+          <button class="primary-button compact accounting-action" id="apply-journal-filters" type="button">Apply</button>
+          </div>
+          <div class="transaction-filters revenue-filters" role="group" aria-label="Filter journal transaction types">
+          <button class="filter-chip active" type="button" data-journal-filter="ALL" aria-pressed="true">All Transactions</button>
+          <button class="filter-chip" type="button" data-journal-filter="SALE" aria-pressed="false">Sales</button>
+          <button class="filter-chip" type="button" data-journal-filter="MEMBERSHIP" aria-pressed="false">Membership</button>
           </div>
           <div class="table-wrap"><table class="accounting-table journal-table"><thead><tr><th>Journal No.</th><th>Date</th><th>Reference</th><th>Account</th><th>Description</th><th>Debit</th><th>Credit</th></tr></thead><tbody id="journal-body"></tbody><tfoot><tr><th colspan="5">Total</th><th id="journal-total-debit">Rp 0</th><th id="journal-total-credit">Rp 0</th></tr></tfoot></table></div>
         </article>
