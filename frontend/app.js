@@ -4,6 +4,34 @@ const configured = Boolean(
   !SUPABASE_URL.includes('YOUR-PROJECT') && !SUPABASE_ANON_KEY.includes('YOUR-SUPABASE')
 );
 const db = configured ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+const PRODUCT_IMAGE_BUCKET = 'product-images';
+const PRODUCT_IMAGE_MAX_SIZE = 5 * 1024 * 1024;
+const PRODUCT_IMAGE_TYPES = {
+  jpg: { mime:'image/jpeg', extension:'jpg' },
+  jpeg: { mime:'image/jpeg', extension:'jpg' },
+  png: { mime:'image/png', extension:'png' },
+  webp: { mime:'image/webp', extension:'webp' }
+};
+const DEFAULT_PRODUCT_IMAGES = {
+  'CF-001':'photo-1517701604599-bb29b565090c',
+  'CF-002':'photo-1461023058943-07fcbe16d735',
+  'CF-003':'photo-1511920170033-f8396924c348',
+  'CF-004':'photo-1515823064-d6e0c04616a7',
+  'CF-005':'photo-1544787219-7f47ccb76574',
+  'CF-006':'photo-1495474472287-4d71bcdd2085',
+  'CF-007':'photo-1509042239860-f550ce710b93',
+  'FD-001':'photo-1555507036-ab1f4038808a',
+  'FD-002':'photo-1509365465985-25d11c17e812',
+  'FD-004':'photo-1623334044303-241021148842',
+  'SN-001':'photo-1573080496219-bb080dd4f877',
+  'SN-002':'photo-1547592180-85f173990554'
+};
+const DEFAULT_CATEGORY_IMAGES = {
+  Coffee:'photo-1509042239860-f550ce710b93',
+  'Non-Coffee':'photo-1544787219-7f47ccb76574',
+  Pastry:'photo-1555507036-ab1f4038808a',
+  Snack:'photo-1573080496219-bb080dd4f877'
+};
 
 const state = {
   products: [],
@@ -12,20 +40,93 @@ const state = {
   cart: [],
   activeCategory: 'All',
   sales: [],
+  transactionFilter: 'ALL',
+  revenueFilter: 'ALL',
   membershipFees: { monthly:35000, reactivation:10000 },
   membershipBillingReady: false,
   pendingMembershipAction: null,
   editingMemberId: null,
   editingProductId: null,
-  editingSaleId: null,
-  saleEditItems: [],
+  accountingEntries: [],
+  accountingReady: false,
+  accountingError: null,
+  revenueEntries: [],
+  revenueRange: null,
+  revenueQueryId: 0,
+  revenueLoading: false,
   charts: {}
 };
 
+const BUSINESS_TIME_ZONE = 'Asia/Jakarta';
 const money = n => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(Number(n || 0));
-const dateFmt = value => new Date(value).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
-const dateTimeFmt = value => new Date(value).toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+function dateValue(value) {
+  const text = String(value ?? '');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return new Date(`${text}T00:00:00+07:00`);
+  if (/^\d{4}-\d{2}-\d{2}[T ]/.test(text) && !/(?:Z|[+-]\d{2}(?::?\d{2})?)$/i.test(text)) {
+    return new Date(`${text.replace(' ', 'T')}+07:00`);
+  }
+  return new Date(value);
+}
+const dateFmt = value => dateValue(value).toLocaleDateString('id-ID', {
+  day:'2-digit',
+  month:'short',
+  year:'numeric',
+  timeZone:BUSINESS_TIME_ZONE
+});
+const dateTimeFmt = value => dateValue(value).toLocaleString('id-ID', {
+  day:'2-digit',
+  month:'short',
+  hour:'2-digit',
+  minute:'2-digit',
+  timeZone:BUSINESS_TIME_ZONE
+});
 const escapeHtml = value => String(value ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+const unsplashImage = photoId => `https://images.unsplash.com/${photoId}?auto=format&fit=crop&w=480&q=85`;
+let productImagePreviewObjectUrl = null;
+
+function productImageUrl(product) {
+  if (product.image_path) {
+    if (/^https?:\/\//i.test(product.image_path)) return product.image_path;
+    if (configured) return db.storage.from(PRODUCT_IMAGE_BUCKET).getPublicUrl(product.image_path).data.publicUrl;
+  }
+  const photoId = DEFAULT_PRODUCT_IMAGES[product.sku] || DEFAULT_CATEGORY_IMAGES[product.category];
+  return photoId ? unsplashImage(photoId) : '';
+}
+
+function isStoredProductImage(path) {
+  return Boolean(path && !/^https?:\/\//i.test(path));
+}
+
+function validateProductImage(file) {
+  const extension = file.name.split('.').pop().toLowerCase();
+  const imageType = PRODUCT_IMAGE_TYPES[extension];
+  if (!imageType || (file.type && file.type !== imageType.mime)) {
+    throw new Error('Pilih gambar berformat JPG, JPEG, PNG, atau WEBP.');
+  }
+  if (!file.size || file.size > PRODUCT_IMAGE_MAX_SIZE) {
+    throw new Error('Ukuran gambar harus lebih dari 0 dan maksimal 5 MB.');
+  }
+  return imageType;
+}
+
+async function uploadProductImage(file) {
+  const imageType = validateProductImage(file);
+  if (!window.crypto?.randomUUID) throw new Error('Browser ini tidak mendukung upload gambar yang aman.');
+  const path = `products/${window.crypto.randomUUID()}.${imageType.extension}`;
+  const { error } = await db.storage.from(PRODUCT_IMAGE_BUCKET).upload(path, file, {
+    cacheControl:'31536000',
+    contentType:imageType.mime,
+    upsert:false
+  });
+  if (error) throw error;
+  return path;
+}
+
+async function removeStoredProductImage(path) {
+  if (!isStoredProductImage(path)) return;
+  const { error } = await db.storage.from(PRODUCT_IMAGE_BUCKET).remove([path]);
+  if (error) throw error;
+}
 
 function toast(message, type = 'info') {
   const el = document.querySelector('#toast');
@@ -38,14 +139,51 @@ function showView(name) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('active-view'));
   document.querySelector(`#view-${name}`).classList.add('active-view');
   document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.view === name));
-  document.querySelector('#page-title').textContent = { dashboard:'Dashboard', sales:'Penjualan', membership:'Membership', products:'Produk' }[name];
+  document.querySelector('#page-title').textContent = { dashboard:'Dashboard', sales:'Sales', 'transaction-history':'Transaction History', membership:'Membership', products:'Products', accounting:'Accounting & Finance' }[name];
 }
 
 document.querySelectorAll('.nav-item').forEach(btn => btn.addEventListener('click', () => showView(btn.dataset.view)));
-document.querySelectorAll('[data-go]').forEach(btn => btn.addEventListener('click', () => {
-  showView(btn.dataset.go);
-  if (btn.dataset.go === 'sales') document.querySelector('#sales-history').scrollIntoView({ behavior:'smooth', block:'start' });
+document.querySelectorAll('[data-go]').forEach(btn => btn.addEventListener('click', () => showView(btn.dataset.go)));
+document.querySelectorAll('[data-transaction-filter]').forEach(button => button.addEventListener('click', () => {
+  state.transactionFilter = button.dataset.transactionFilter;
+  renderSalesHistory();
 }));
+document.querySelectorAll('[data-accounting-tab]').forEach(button => button.addEventListener('click', () => showAccountingPane(button.dataset.accountingTab)));
+document.querySelector('#revenue-period').addEventListener('change', () => {
+  if (document.querySelector('#revenue-period').value !== 'custom') setRevenueReportPeriod();
+  renderRevenueReport();
+});
+document.querySelector('#apply-revenue-period').addEventListener('click', renderRevenueReport);
+['#revenue-date-from', '#revenue-date-to'].forEach(selector => {
+  document.querySelector(selector).addEventListener('change', () => {
+    document.querySelector('#revenue-period').value = 'custom';
+    renderRevenueReport();
+  });
+});
+document.querySelectorAll('[data-revenue-filter]').forEach(button => button.addEventListener('click', () => {
+  state.revenueFilter = button.dataset.revenueFilter;
+  document.querySelectorAll('[data-revenue-filter]').forEach(filterButton => {
+    const selected = filterButton.dataset.revenueFilter === state.revenueFilter;
+    filterButton.classList.toggle('active', selected);
+    filterButton.setAttribute('aria-pressed', String(selected));
+  });
+  renderRevenueReport();
+}));
+document.querySelector('#print-revenue-report').addEventListener('click', () => window.print());
+document.querySelector('#export-revenue-report').addEventListener('click', exportRevenueReport);
+window.addEventListener('beforeprint', () => {
+  const pane = document.querySelector('#accounting-pane-revenue-report');
+  if (!pane.classList.contains('active')) return;
+  const from = document.querySelector('#revenue-date-from').value;
+  const to = document.querySelector('#revenue-date-to').value;
+  if (!state.revenueLoading && state.revenueRange?.from === from &&
+      state.revenueRange?.to === to && state.revenueRange?.filter === state.revenueFilter) {
+    renderRevenueChart(calculateRevenueReport(state.revenueEntries, from, to, state.revenueFilter), true);
+  }
+});
+window.addEventListener('afterprint', () => {
+  if (document.querySelector('#accounting-pane-revenue-report').classList.contains('active')) renderRevenueReport();
+});
 
 document.querySelector('#today-pill').textContent = new Date().toLocaleDateString('id-ID', { weekday:'short', day:'2-digit', month:'short', year:'numeric' });
 document.querySelector('#refresh-btn').addEventListener('click', loadAll);
@@ -72,15 +210,14 @@ async function loadAll() {
     return;
   }
   try {
-    const [{ data: products, error: pErr }, { data: members, error: mErr }, { data: sales, error: sErr }, { data: fees, error: feeErr }] = await Promise.all([
+    const [{ data: products, error: pErr }, { data: members, error: mErr }, sales, { data: fees, error: feeErr }] = await Promise.all([
       db.from('products').select('*').order('category').order('name'),
       db.from('members').select('*').order('joined_at', { ascending:false }),
-      db.from('sales').select('id, receipt_no, sold_at, member_id, subtotal, discount_pct, discount_amount, total, payment_method').order('sold_at', { ascending:false }).limit(150),
+      loadSalesHistory(),
       db.rpc('get_membership_fees').single()
     ]);
     if (pErr) throw pErr;
     if (mErr) throw mErr;
-    if (sErr) throw sErr;
     state.products = products || [];
     state.members = members || [];
     state.sales = sales || [];
@@ -92,10 +229,341 @@ async function loadAll() {
       state.membershipFees = { monthly:Number(fees.monthly_fee), reactivation:Number(fees.reactivation_fee) };
     }
     renderAll();
+    await loadAccountingData();
   } catch (err) {
     console.error(err);
     toast(`Supabase error: ${err.message}`, 'error');
   }
+}
+
+async function loadSalesHistory() {
+  const pageSize = 1000;
+  const sales = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await db.from('sales')
+      .select('id, receipt_no, sold_at, member_id, subtotal, discount_pct, discount_amount, total, payment_method')
+      .order('sold_at', { ascending:false })
+      .order('id', { ascending:false })
+      .range(offset, offset + pageSize - 1);
+    if (error) throw error;
+    sales.push(...(data || []));
+    if (!data || data.length < pageSize) return sales;
+  }
+}
+
+async function loadAccountingData() {
+  if (!configured) {
+    state.accountingReady = false;
+    state.accountingError = 'Hubungkan Supabase dan jalankan backend/accounting_migration.sql untuk menggunakan Accounting & Finance.';
+    renderAccounting();
+    return;
+  }
+  try {
+    state.accountingEntries = await loadJournalEntries();
+    state.accountingReady = true;
+    state.accountingError = null;
+  } catch (err) {
+    console.error(err);
+    state.accountingReady = false;
+    state.accountingEntries = [];
+    state.accountingError = `Accounting database belum siap. Jalankan backend/accounting_migration.sql. (${err.message})`;
+  }
+  renderAccounting();
+}
+
+async function loadJournalEntries() {
+  const pageSize = 500;
+  const entries = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await db.from('journal_entries')
+      .select('id,journal_no,entry_date,source_type,source_reference,description,status,journal_lines(id,account_id,description,debit,credit,chart_of_accounts(account_code,account_name,account_type,system_role))')
+      .order('entry_date', { ascending:false })
+      .order('journal_no', { ascending:false })
+      .range(offset, offset + pageSize - 1);
+    if (error) throw error;
+    entries.push(...(data || []));
+    if (!data || data.length < pageSize) return entries;
+  }
+}
+
+async function loadRevenueEntries(from, to, filter) {
+  const pageSize = 500;
+  const sourceTypes = filter === 'ALL' ? ['SALE', 'MEMBERSHIP'] : [filter];
+  const entries = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const { data, error } = await db.from('journal_entries')
+      .select('id,journal_no,entry_date,source_type,source_reference,description,status,journal_lines(id,account_id,description,debit,credit,chart_of_accounts(account_code,account_name,account_type,system_role))')
+      .eq('status', 'POSTED')
+      .in('source_type', sourceTypes)
+      .gte('entry_date', from)
+      .lte('entry_date', to)
+      .order('entry_date', { ascending:false })
+      .order('journal_no', { ascending:false })
+      .range(offset, offset + pageSize - 1);
+    if (error) throw error;
+    entries.push(...(data || []));
+    if (!data || data.length < pageSize) return entries;
+  }
+}
+
+function showAccountingPane(name) {
+  document.querySelectorAll('[data-accounting-tab]').forEach(button => {
+    const selected = button.dataset.accountingTab === name;
+    button.classList.toggle('active', selected);
+    button.setAttribute('aria-selected', String(selected));
+  });
+  document.querySelectorAll('.accounting-pane').forEach(pane => {
+    const selected = pane.id === `accounting-pane-${name}`;
+    pane.classList.toggle('active', selected);
+    pane.hidden = !selected;
+  });
+  if (name === 'revenue-report') renderRevenueReport();
+}
+
+function renderAccounting() {
+  const setupMessage = document.querySelector('#accounting-setup-message');
+  setupMessage.hidden = !state.accountingError;
+  setupMessage.textContent = state.accountingError || '';
+  renderProducts();
+  renderJournal();
+  renderRevenueReport();
+}
+
+function journalLineAccount(line) {
+  return Array.isArray(line.chart_of_accounts) ? line.chart_of_accounts[0] : line.chart_of_accounts;
+}
+
+function journalTransactionDate(entry) {
+  const reference = String(entry.source_reference || '').toUpperCase();
+  if (entry.source_type === 'SALE') {
+    return state.sales.find(sale => String(sale.receipt_no || '').toUpperCase() === reference)?.sold_at || entry.entry_date;
+  }
+  if (entry.source_type === 'MEMBERSHIP') {
+    for (const member of state.members) {
+      const payments = Array.isArray(member.membership_payments) ? member.membership_payments : [];
+      const index = payments.findIndex((payment, paymentIndex) => {
+        const receipt = payment.receipt_no || `MBR-${member.id}-${paymentIndex + 1}`;
+        return String(receipt).toUpperCase() === reference;
+      });
+      if (index >= 0) {
+        const payment = payments[index];
+        return payment.paid_at || payment.coverage_start || member.joined_at || entry.entry_date;
+      }
+    }
+  }
+  return entry.entry_date;
+}
+
+function renderJournal() {
+  const entries = state.accountingEntries.filter(entry => entry.status === 'POSTED');
+  const rows = [];
+  let totalDebit = 0;
+  let totalCredit = 0;
+  entries.forEach(entry => {
+    (entry.journal_lines || []).forEach(line => {
+      const account = journalLineAccount(line) || {};
+      totalDebit += Number(line.debit || 0);
+      totalCredit += Number(line.credit || 0);
+      rows.push(`<tr><td><span class="mono">${escapeHtml(entry.journal_no)}</span></td><td>${dateFmt(journalTransactionDate(entry))}</td><td><span class="mono">${escapeHtml(entry.source_reference)}</span><br><small>${escapeHtml(entry.source_type)}</small></td><td>${escapeHtml(account.account_code || '')} · ${escapeHtml(account.account_name || 'Account unavailable')}</td><td>${escapeHtml(line.description || entry.description || '')}</td><td>${Number(line.debit) ? money(line.debit) : '—'}</td><td>${Number(line.credit) ? money(line.credit) : '—'}</td></tr>`);
+    });
+  });
+  document.querySelector('#journal-body').innerHTML = rows.join('') || '<tr><td colspan="7" class="empty-cell">No journal entries for the selected database.</td></tr>';
+  document.querySelector('#journal-total-debit').textContent = money(totalDebit);
+  document.querySelector('#journal-total-credit').textContent = money(totalCredit);
+}
+
+function isoDate(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function setRevenueReportPeriod() {
+  const today = new Date();
+  const period = document.querySelector('#revenue-period').value;
+  let start;
+  let end;
+  if (period === 'quarter') {
+    const quarterStartMonth = Math.floor(today.getMonth() / 3) * 3;
+    start = new Date(today.getFullYear(), quarterStartMonth, 1);
+    end = new Date(today.getFullYear(), quarterStartMonth + 3, 0);
+  } else if (period === 'year') {
+    start = new Date(today.getFullYear(), 0, 1);
+    end = new Date(today.getFullYear(), 11, 31);
+  } else {
+    start = new Date(today.getFullYear(), today.getMonth(), 1);
+    end = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+  }
+  document.querySelector('#revenue-date-from').value = isoDate(start);
+  document.querySelector('#revenue-date-to').value = isoDate(end);
+}
+
+function calculateRevenueReport(entries, from, to, filter = 'ALL') {
+  const totals = { salesRevenue:0, membershipRevenue:0 };
+  const seenReferences = new Set();
+  entries.filter(entry =>
+    entry.status === 'POSTED' &&
+    (entry.source_type === 'SALE' || entry.source_type === 'MEMBERSHIP') &&
+    entry.entry_date >= from && entry.entry_date <= to &&
+    (filter === 'ALL' || entry.source_type === filter)
+  ).forEach(entry => {
+    const reference = String(entry.source_reference || entry.id);
+    if (seenReferences.has(reference)) return;
+    seenReferences.add(reference);
+    (entry.journal_lines || []).forEach(line => {
+      const account = journalLineAccount(line) || {};
+      const debit = Number(line.debit || 0);
+      const credit = Number(line.credit || 0);
+      if (entry.source_type === 'SALE' && account.system_role === 'SALES_REVENUE') totals.salesRevenue += credit - debit;
+      else if (entry.source_type === 'MEMBERSHIP' && account.system_role === 'MEMBERSHIP_REVENUE') totals.membershipRevenue += credit - debit;
+    });
+  });
+  totals.totalRevenue = totals.salesRevenue + totals.membershipRevenue;
+  return totals;
+}
+
+function renderRevenueChart(totals, printMode = false) {
+  const canvas = document.querySelector('#revenueChart');
+  if (state.charts.revenue) state.charts.revenue.destroy();
+  if (!window.Chart) return;
+  state.charts.revenue = new Chart(canvas, {
+    type:'bar',
+    data:{
+      labels:['Sales Revenue', 'Membership Revenue'],
+      datasets:[{
+        data:[totals.salesRevenue, totals.membershipRevenue],
+        backgroundColor:['rgba(214,160,84,.78)', 'rgba(126,161,137,.78)'],
+        borderRadius:8,
+        borderSkipped:false
+      }]
+    },
+    options:{
+      indexAxis:'y',
+      maintainAspectRatio:false,
+      plugins:{ legend:{ display:false }, tooltip:{ callbacks:{ label:context => money(context.raw) } } },
+      scales:{
+        x:{ beginAtZero:true, grid:{ color:printMode ? 'rgba(0,0,0,.12)' : 'rgba(255,255,255,.06)' }, ticks:{ color:printMode ? '#111' : '#bdb4aa', callback:value => `Rp ${Math.round(value / 1000)}k` } },
+        y:{ grid:{ display:false }, ticks:{ color:printMode ? '#111' : '#bdb4aa' } }
+      }
+    }
+  });
+}
+
+function setRevenueReportLoading(isLoading) {
+  state.revenueLoading = isLoading;
+  ['#apply-revenue-period', '#print-revenue-report', '#export-revenue-report'].forEach(selector => {
+    document.querySelector(selector).disabled = isLoading;
+  });
+}
+
+function renderRevenueReport() {
+  const reportSelectors = ['#revenue-sales', '#revenue-membership', '#revenue-total'];
+  const requestId = ++state.revenueQueryId;
+  if (!state.accountingReady) {
+    document.querySelector('#revenue-report-period-label').textContent = 'Accounting data is unavailable until the database migration is applied.';
+    reportSelectors.forEach(selector => { document.querySelector(selector).textContent = '—'; });
+    state.revenueEntries = [];
+    state.revenueRange = null;
+    setRevenueReportLoading(false);
+    if (state.charts.revenue) {
+      state.charts.revenue.destroy();
+      state.charts.revenue = null;
+    }
+    return;
+  }
+  if (!document.querySelector('#revenue-date-from').value && !document.querySelector('#revenue-date-to').value &&
+      document.querySelector('#revenue-period').value !== 'custom') setRevenueReportPeriod();
+  const rangeStart = document.querySelector('#revenue-date-from').value;
+  const rangeEnd = document.querySelector('#revenue-date-to').value;
+  const label = document.querySelector('#revenue-report-period-label');
+  if (!rangeStart || !rangeEnd) {
+    label.textContent = 'Select both a start date and an end date.';
+    reportSelectors.forEach(selector => { document.querySelector(selector).textContent = '—'; });
+    state.revenueEntries = [];
+    state.revenueRange = null;
+    setRevenueReportLoading(false);
+    if (state.charts.revenue) {
+      state.charts.revenue.destroy();
+      state.charts.revenue = null;
+    }
+    return;
+  }
+  if (rangeStart > rangeEnd) {
+    label.textContent = 'The start date must be on or before the end date.';
+    reportSelectors.forEach(selector => { document.querySelector(selector).textContent = '—'; });
+    state.revenueEntries = [];
+    state.revenueRange = null;
+    setRevenueReportLoading(false);
+    if (state.charts.revenue) {
+      state.charts.revenue.destroy();
+      state.charts.revenue = null;
+    }
+    return;
+  }
+  const filterLabels = { ALL:'All Revenue', SALE:'Sales', MEMBERSHIP:'Membership' };
+  const filter = state.revenueFilter;
+  label.textContent = `${dateFmt(rangeStart)} – ${dateFmt(rangeEnd)} · ${filterLabels[filter]}`;
+  reportSelectors.forEach(selector => { document.querySelector(selector).textContent = '—'; });
+  state.revenueRange = null;
+  if (state.charts.revenue) {
+    state.charts.revenue.destroy();
+    state.charts.revenue = null;
+  }
+  setRevenueReportLoading(true);
+  loadRevenueEntries(rangeStart, rangeEnd, filter)
+    .then(entries => {
+      if (requestId !== state.revenueQueryId) return;
+      state.revenueEntries = entries;
+      state.revenueRange = { from:rangeStart, to:rangeEnd, filter };
+      const totals = calculateRevenueReport(entries, rangeStart, rangeEnd, filter);
+      document.querySelector('#revenue-sales').textContent = money(totals.salesRevenue);
+      document.querySelector('#revenue-membership').textContent = money(totals.membershipRevenue);
+      document.querySelector('#revenue-total').textContent = money(totals.totalRevenue);
+      renderRevenueChart(totals);
+    })
+    .catch(error => {
+      if (requestId !== state.revenueQueryId) return;
+      console.error(error);
+      state.revenueEntries = [];
+      state.revenueRange = null;
+      label.textContent = `Unable to load revenue report: ${error.message}`;
+    })
+    .finally(() => {
+      if (requestId === state.revenueQueryId) setRevenueReportLoading(false);
+    });
+}
+
+function exportRevenueReport() {
+  if (!state.accountingReady) {
+    toast('Accounting data is unavailable until the database migration is applied.', 'warn');
+    return;
+  }
+  const from = document.querySelector('#revenue-date-from').value;
+  const to = document.querySelector('#revenue-date-to').value;
+  if (!from || !to || from > to) {
+    toast('Select a valid reporting date range before exporting.', 'warn');
+    return;
+  }
+  if (state.revenueLoading || !state.revenueRange ||
+      state.revenueRange.from !== from || state.revenueRange.to !== to ||
+      state.revenueRange.filter !== state.revenueFilter) {
+    toast('Wait for the report to finish updating before exporting.', 'warn');
+    return;
+  }
+  const totals = calculateRevenueReport(state.revenueEntries, from, to, state.revenueFilter);
+  const rows = [
+    ['Revenue Report', `${from} to ${to}`],
+    ['Revenue Type', state.revenueFilter],
+    ['Currency', 'IDR'],
+    ['Sales Revenue', totals.salesRevenue],
+    ['Membership Revenue', totals.membershipRevenue],
+    ['Total Revenue', totals.totalRevenue]
+  ];
+  const csv = `\uFEFF${rows.map(row => row.map(value => `"${String(value).replace(/"/g, '""')}"`).join(',')).join('\r\n')}`;
+  const url = URL.createObjectURL(new Blob([csv], { type:'text/csv;charset=utf-8' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `revenue-report-${from}-${to}.csv`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function renderAll() {
@@ -105,6 +573,7 @@ function renderAll() {
   renderMembers();
   renderDashboard();
   renderCart();
+  renderAccounting();
 }
 
 function renderDemoState() {
@@ -124,6 +593,8 @@ function renderDemoState() {
     {id:'m5',membership_number:'BRW-0005',joined_at:'2026-08-20',status:'ACTIVE'}
   ];
   state.sales = [];
+  state.accountingReady = false;
+  state.accountingError = 'Hubungkan Supabase dan jalankan backend/accounting_migration.sql untuk menggunakan Accounting & Finance.';
   renderAll();
 }
 
@@ -134,9 +605,14 @@ function renderPOS() {
   filter.querySelectorAll('.filter-chip').forEach(btn => btn.addEventListener('click', () => { state.activeCategory = btn.dataset.cat; renderPOS(); }));
 
   const items = state.products.filter(p => p.is_active && (state.activeCategory === 'All' || p.category === state.activeCategory));
-  document.querySelector('#pos-products').innerHTML = items.map(p => `
-    <button class="product-card" data-id="${p.id}"><span class="product-thumb">${p.category === 'Snack' ? '🍿' : p.category === 'Pastry' ? '🥐' : p.category === 'Non-Coffee' ? '🍵' : '☕'}</span><div><b>${escapeHtml(p.name)}</b><span>${escapeHtml(p.category)}</span><strong>${money(p.price)}</strong></div></button>
-  `).join('');
+  document.querySelector('#pos-products').innerHTML = items.map(p => {
+    const imageUrl = productImageUrl(p);
+    return `<button class="product-card" data-id="${escapeHtml(p.id)}"><span class="product-thumb ${imageUrl ? '' : 'is-placeholder'}">${imageUrl ? `<img src="${escapeHtml(imageUrl)}" alt="${escapeHtml(p.name)}" loading="lazy">` : ''}<span class="product-image-placeholder">No image</span></span><div><b>${escapeHtml(p.name)}</b><span>${escapeHtml(p.category)}</span><strong>${money(p.price)}</strong></div></button>`;
+  }).join('');
+  document.querySelectorAll('.product-thumb img').forEach(image => image.addEventListener('error', () => {
+    image.parentElement.classList.add('is-placeholder');
+    image.hidden = true;
+  }, { once:true }));
   document.querySelectorAll('.product-card').forEach(btn => btn.addEventListener('click', () => addToCart(btn.dataset.id)));
 }
 
@@ -164,123 +640,95 @@ function renderCart() {
 
 function renderSalesHistory() {
   const body = document.querySelector('#sales-history-body');
-  body.innerHTML = state.sales.map(s => {
-    const member = state.members.find(m => m.id === s.member_id)?.membership_number || 'Walk-in';
-    return `<tr><td><span class="mono">${escapeHtml(s.receipt_no)}</span></td><td>${dateTimeFmt(s.sold_at)}</td><td>${escapeHtml(member)}</td><td><b>${money(s.total)}</b></td><td>${escapeHtml(s.payment_method)}</td><td><div class="sale-edit-actions"><button class="text-button" data-sale-detail="${escapeHtml(s.id)}">Detail</button><button class="text-button" data-sale-edit="${escapeHtml(s.id)}">Edit</button><button class="text-button status-action" data-sale-delete="${escapeHtml(s.id)}">Hapus</button></div></td></tr>`;
-  }).join('') || '<tr><td colspan="6" class="empty-cell">Belum ada transaksi.</td></tr>';
-  body.querySelectorAll('[data-sale-detail]').forEach(button => button.addEventListener('click', () => showSaleDetail(button.dataset.saleDetail)));
-  body.querySelectorAll('[data-sale-edit]').forEach(button => button.addEventListener('click', () => openSaleEditor(button.dataset.saleEdit)));
-  body.querySelectorAll('[data-sale-delete]').forEach(button => button.addEventListener('click', () => deleteSale(button.dataset.saleDelete)));
+  const transactions = getTransactionHistory().filter(transaction =>
+    state.transactionFilter === 'ALL' || transaction.type === state.transactionFilter
+  );
+  body.innerHTML = transactions.map(transaction => `
+    <tr>
+      <td><span class="mono">${escapeHtml(transaction.receiptNo || '—')}</span></td>
+      <td>${dateTimeFmt(transaction.date)}</td>
+      <td><span class="transaction-type-badge ${transaction.type.toLowerCase()}">${transaction.type === 'SALE' ? 'Sales' : 'Membership'}</span></td>
+      <td>${escapeHtml(transaction.label)}</td>
+      <td>${escapeHtml(transaction.memberNumber)}</td>
+      <td><b>${money(transaction.amount)}</b></td>
+      <td>${escapeHtml(transaction.paymentMethod)}</td>
+      <td><button class="text-button" data-transaction-detail="${escapeHtml(transaction.id)}">Detail</button></td>
+    </tr>
+  `).join('') || '<tr><td colspan="8" class="empty-cell">Tidak ada transaksi untuk filter ini.</td></tr>';
+  document.querySelectorAll('[data-transaction-filter]').forEach(button => {
+    button.classList.toggle('active', button.dataset.transactionFilter === state.transactionFilter);
+    button.setAttribute('aria-pressed', String(button.dataset.transactionFilter === state.transactionFilter));
+  });
+  body.querySelectorAll('[data-transaction-detail]').forEach(button => button.addEventListener('click', () => showTransactionDetail(button.dataset.transactionDetail)));
 }
 
-async function openSaleEditor(saleId) {
-  if (!configured) { toast('Hubungkan Supabase untuk merevisi transaksi.', 'warn'); return; }
-  const sale = state.sales.find(item => item.id === saleId);
-  if (!sale) return;
-  try {
-    const { data: items, error } = await db.from('sale_items')
-      .select('product_id, qty, products(name)')
-      .eq('sale_id', saleId);
-    if (error) throw error;
-    state.editingSaleId = saleId;
-    state.saleEditItems = (items || []).map(item => ({ product_id:item.product_id, qty:item.qty }));
-    document.querySelector('#sale-edit-title').textContent = `Edit ${sale.receipt_no}`;
-    const memberSelect = document.querySelector('#sale-edit-member');
-    const members = [...state.members];
-    const saleMember = members.find(member => member.id === sale.member_id);
-    const memberOptions = members.filter(member => member.status === 'ACTIVE' || member.id === sale.member_id);
-    memberSelect.innerHTML = '<option value="">Walk-in</option>' + memberOptions.map(member =>
-      `<option value="${escapeHtml(member.id)}">${escapeHtml(member.membership_number)}${member.status === 'INACTIVE' ? ' (INACTIVE)' : ''}</option>`
-    ).join('');
-    memberSelect.value = saleMember?.id || '';
-    document.querySelector('#sale-edit-payment').value = sale.payment_method;
-    document.querySelector('#sale-edit-message').textContent = '';
-    renderSaleEditItems();
-    openModal('sale-edit-modal');
-  } catch (err) {
-    console.error(err);
-    toast(`Gagal membuka transaksi: ${err.message}`, 'error');
-  }
-}
-
-function renderSaleEditItems() {
-  const wrap = document.querySelector('#sale-edit-items');
-  wrap.innerHTML = state.saleEditItems.map((item, index) => {
-    const options = state.products.map(product => {
-      const disabled = !product.is_active && product.id !== item.product_id;
-      return `<option value="${escapeHtml(product.id)}" ${product.id === item.product_id ? 'selected' : ''} ${disabled ? 'disabled' : ''}>${escapeHtml(product.name)} · ${money(product.price)}${product.is_active ? '' : ' (non-available)'}</option>`;
-    }).join('');
-    return `<div class="sale-edit-row"><label class="field-label">Produk<select class="input-control" data-sale-product="${index}">${options}</select></label><label class="field-label">Qty<input class="input-control" data-sale-qty="${index}" type="number" min="1" max="999" value="${item.qty}"></label><button class="remove-sale-item" data-sale-item-remove="${index}" type="button" aria-label="Hapus item">×</button></div>`;
-  }).join('') || '<p class="micro-copy">Belum ada item. Tambahkan minimal satu produk.</p>';
-  wrap.querySelectorAll('[data-sale-product]').forEach(select => select.addEventListener('change', () => {
-    state.saleEditItems[Number(select.dataset.saleProduct)].product_id = select.value;
-  }));
-  wrap.querySelectorAll('[data-sale-qty]').forEach(input => input.addEventListener('input', () => {
-    state.saleEditItems[Number(input.dataset.saleQty)].qty = Number(input.value);
-  }));
-  wrap.querySelectorAll('[data-sale-item-remove]').forEach(button => button.addEventListener('click', () => {
-    state.saleEditItems.splice(Number(button.dataset.saleItemRemove), 1);
-    renderSaleEditItems();
-  }));
-}
-
-document.querySelector('#add-sale-item').addEventListener('click', () => {
-  const product = state.products.find(item => item.is_active);
-  if (!product) { document.querySelector('#sale-edit-message').textContent = 'Tidak ada produk available untuk ditambahkan.'; return; }
-  state.saleEditItems.push({ product_id:product.id, qty:1 });
-  renderSaleEditItems();
-});
-
-document.querySelector('#sale-edit-form').addEventListener('submit', async event => {
-  event.preventDefault();
-  const message = document.querySelector('#sale-edit-message');
-  if (!state.editingSaleId || !state.saleEditItems.length) { message.textContent = 'Transaksi harus memiliki minimal satu item.'; message.className = 'form-message error'; return; }
-  if (state.saleEditItems.some(item => !Number.isInteger(item.qty) || item.qty < 1 || item.qty > 999)) { message.textContent = 'Jumlah tiap item harus antara 1 dan 999.'; message.className = 'form-message error'; return; }
-  const submit = document.querySelector('#sale-edit-submit');
-  submit.disabled = true;
-  message.textContent = '';
-  try {
-    const { error } = await db.rpc('revise_sale', {
-      p_sale_id:state.editingSaleId,
-      p_member_id:document.querySelector('#sale-edit-member').value || null,
-      p_payment_method:document.querySelector('#sale-edit-payment').value,
-      p_items:state.saleEditItems
+function getTransactionHistory() {
+  const transactions = state.sales
+    .filter(sale => !String(sale.receipt_no || '').toUpperCase().startsWith('MBR-'))
+    .map(sale => ({
+      id:`sale:${sale.id}`,
+      type:'SALE',
+      receiptNo:sale.receipt_no,
+      date:sale.sold_at,
+      label:'POS Sale',
+      memberNumber:state.members.find(member => member.id === sale.member_id)?.membership_number || 'Walk-in',
+      amount:Number(sale.total),
+      paymentMethod:sale.payment_method,
+      sale
+    }));
+  const seenMembershipReceipts = new Set();
+  state.members.forEach(member => {
+    (Array.isArray(member.membership_payments) ? member.membership_payments : []).forEach((payment, index) => {
+      const receiptNo = payment.receipt_no ? String(payment.receipt_no) : '';
+      const receiptKey = receiptNo.toUpperCase();
+      if (receiptKey && seenMembershipReceipts.has(receiptKey)) return;
+      if (receiptKey) seenMembershipReceipts.add(receiptKey);
+      const amount = Number(payment.total_amount ?? (Number(payment.subscription_fee || 0) + Number(payment.reactivation_fee || 0)));
+      transactions.push({
+        id:`membership:${member.id}:${receiptNo || index}`,
+        type:'MEMBERSHIP',
+        receiptNo,
+        date:payment.paid_at || payment.coverage_start || member.joined_at,
+        label:membershipPaymentTypeLabel(payment.payment_type),
+        memberNumber:member.membership_number,
+        amount,
+        paymentMethod:payment.payment_method || '—',
+        payment
+      });
     });
-    if (error) throw error;
-    closeModal('sale-edit-modal');
-    toast('Transaksi berhasil direvisi.', 'success');
-    state.editingSaleId = null;
-    state.saleEditItems = [];
-    await loadAll();
-  } catch (err) {
-    console.error(err);
-    message.textContent = `Gagal merevisi transaksi: ${err.message}`;
-    message.className = 'form-message error';
-  } finally {
-    submit.disabled = false;
-  }
-});
-
-async function deleteSale(saleId) {
-  const sale = state.sales.find(item => item.id === saleId);
-  if (!sale || !window.confirm(`Hapus transaksi ${sale.receipt_no} beserta rincian itemnya? Tindakan ini tidak dapat dibatalkan.`)) return;
-  if (!configured) { toast('Hubungkan Supabase untuk menghapus transaksi.', 'warn'); return; }
-  try {
-    const { error } = await db.rpc('delete_sale', { p_sale_id:saleId });
-    if (error) throw error;
-    toast('Transaksi berhasil dihapus.', 'success');
-    await loadAll();
-  } catch (err) {
-    console.error(err);
-    toast(`Gagal menghapus transaksi: ${err.message}`, 'error');
-  }
+  });
+  return transactions
+    .filter(transaction => transaction.type !== 'SALE' || !seenMembershipReceipts.has(String(transaction.receiptNo || '').toUpperCase()))
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 }
 
-async function showSaleDetail(saleId) {
-  const sale = state.sales.find(item => item.id === saleId);
-  if (!sale) return;
+function membershipPaymentTypeLabel(paymentType) {
+  const labels = {
+    NEW:'Registration',
+    REGISTRATION:'Registration',
+    RENEWAL:'Renewal',
+    REACTIVATION:'Reactivation'
+  };
+  return labels[String(paymentType || '').toUpperCase()] || 'Membership Payment';
+}
+
+async function showTransactionDetail(transactionId) {
+  const transaction = getTransactionHistory().find(item => item.id === transactionId);
+  if (!transaction) return;
   const content = document.querySelector('#sale-detail-content');
-  document.querySelector('#sale-detail-title').textContent = `Receipt ${sale.receipt_no}`;
+  document.querySelector('#sale-detail-title').textContent = transaction.receiptNo
+    ? `Receipt ${transaction.receiptNo}`
+    : `${transaction.label}`;
+  if (transaction.type === 'MEMBERSHIP') {
+    const payment = transaction.payment;
+    document.querySelector('#sale-detail-title').textContent = transaction.receiptNo
+      ? `Receipt ${transaction.receiptNo}`
+      : 'Membership Payment';
+    content.innerHTML = `<p class="micro-copy">${dateTimeFmt(transaction.date)}</p><div class="membership-payment-summary"><div><span>Membership No.</span><b>${escapeHtml(transaction.memberNumber)}</b></div><div><span>Transaction Type</span><b>${escapeHtml(transaction.label)}</b></div><div><span>Payment Method</span><b>${escapeHtml(transaction.paymentMethod)}</b></div><div class="summary-total"><span>Payment Amount</span><strong>${money(transaction.amount)}</strong></div>${payment.coverage_start || payment.coverage_end ? `<p class="micro-copy">Coverage: ${payment.coverage_start ? dateFmt(payment.coverage_start) : '—'} – ${payment.coverage_end ? dateFmt(payment.coverage_end) : '—'}</p>` : ''}</div>`;
+    openModal('sale-detail-modal');
+    return;
+  }
+  const sale = transaction.sale;
   content.innerHTML = '<p class="micro-copy">Memuat rincian transaksi…</p>';
   openModal('sale-detail-modal');
   if (!configured) {
@@ -290,7 +738,7 @@ async function showSaleDetail(saleId) {
   try {
     const { data: items, error } = await db.from('sale_items')
       .select('qty, unit_price, line_total, products(name, sku)')
-      .eq('sale_id', saleId);
+      .eq('sale_id', sale.id);
     if (error) throw error;
     const member = state.members.find(m => m.id === sale.member_id)?.membership_number || 'Walk-in';
     const itemRows = (items || []).map(item => {
@@ -361,7 +809,13 @@ async function checkout() {
     const payment = document.querySelector('#payment-method').value;
     const { data: sale, error } = await db.from('sales').insert({ receipt_no:receipt, member_id:state.memberLookup?.id || null, subtotal, discount_pct:discountPct, discount_amount:discountAmount, total, payment_method:payment }).select().single();
     if (error) throw error;
-    const lineRows = state.cart.map(i => ({ sale_id:sale.id, product_id:i.product.id, qty:i.qty, unit_price:i.product.price, line_total:Number(i.product.price)*i.qty }));
+    const lineRows = state.cart.map(i => ({
+      sale_id:sale.id,
+      product_id:i.product.id,
+      qty:i.qty,
+      unit_price:i.product.price,
+      line_total:Number(i.product.price)*i.qty
+    }));
     const { error: lineError } = await db.from('sale_items').insert(lineRows);
     if (lineError) throw lineError;
     toast(`Transaksi ${receipt} berhasil disimpan.`, 'success');
@@ -375,20 +829,21 @@ async function checkout() {
 
 function renderMembers() {
   const query = document.querySelector('#member-search').value.trim().toUpperCase();
-  const rows = state.members.filter(m => !query || m.membership_number.toUpperCase().includes(query));
+  const rows = state.members
+    .filter(m => !query || m.membership_number.toUpperCase().includes(query))
+    .sort((left, right) => left.membership_number.localeCompare(right.membership_number, undefined, { numeric:true, sensitivity:'base' }));
   document.querySelector('#new-member-fee').textContent = money(state.membershipFees.monthly);
   document.querySelector('#members-body').innerHTML = rows.map(m => {
     const r = membershipRule(m.joined_at);
     const action = m.status === 'ACTIVE'
       ? `<button class="text-button" data-renew-member="${escapeHtml(m.id)}">Bayar iuran</button><button class="text-button status-action" data-deactivate-member="${escapeHtml(m.id)}">Nonaktifkan</button>`
       : `<button class="text-button" data-reactivate-member="${escapeHtml(m.id)}">Aktifkan kembali</button>`;
-    return `<tr><td><b>${escapeHtml(m.membership_number)}</b></td><td>${dateFmt(m.joined_at)}</td><td>${r.months} bln</td><td>${getTierBadge(r.tier)}</td><td><b>${r.discount}%</b></td><td>${m.paid_through ? dateFmt(m.paid_through) : 'Belum tercatat'}</td><td><span class="status-pill ${m.status.toLowerCase()}">${m.status}</span></td><td><div class="member-actions"><button class="text-button" data-member-edit="${escapeHtml(m.id)}">Edit</button><button class="text-button status-action" data-member-delete="${escapeHtml(m.id)}">Hapus</button>${action}</div></td></tr>`;
+    return `<tr><td><b>${escapeHtml(m.membership_number)}</b></td><td>${dateFmt(m.joined_at)}</td><td>${r.months} bln</td><td>${getTierBadge(r.tier)}</td><td><b>${r.discount}%</b></td><td>${m.paid_through ? dateFmt(m.paid_through) : 'Belum tercatat'}</td><td><span class="status-pill ${m.status.toLowerCase()}">${m.status}</span></td><td><div class="member-actions"><button class="text-button" data-member-edit="${escapeHtml(m.id)}">Edit</button>${action}</div></td></tr>`;
   }).join('') || '<tr><td colspan="8" class="empty-cell">Member tidak ditemukan.</td></tr>';
   document.querySelectorAll('[data-renew-member]').forEach(button => button.addEventListener('click', () => openMembershipPayment(button.dataset.renewMember, 'RENEWAL')));
   document.querySelectorAll('[data-reactivate-member]').forEach(button => button.addEventListener('click', () => openMembershipPayment(button.dataset.reactivateMember, 'REACTIVATION')));
   document.querySelectorAll('[data-deactivate-member]').forEach(button => button.addEventListener('click', () => deactivateMember(button.dataset.deactivateMember)));
   document.querySelectorAll('[data-member-edit]').forEach(button => button.addEventListener('click', () => openMemberEditor(button.dataset.memberEdit)));
-  document.querySelectorAll('[data-member-delete]').forEach(button => button.addEventListener('click', () => deleteMember(button.dataset.memberDelete)));
 }
 document.querySelector('#member-search').addEventListener('input', renderMembers);
 
@@ -420,21 +875,6 @@ async function deactivateMember(memberId) {
   }
 }
 
-async function deleteMember(memberId) {
-  const member = state.members.find(item => item.id === memberId);
-  if (!member || !window.confirm(`Hapus membership ${member.membership_number}? Riwayat penjualan tetap menghalangi penghapusan, dan iuran yang masih aktif harus menunggu sampai masa berlakunya habis.`)) return;
-  if (!configured) { toast('Hubungkan Supabase untuk menghapus membership.', 'warn'); return; }
-  try {
-    const { error } = await db.rpc('delete_membership', { p_member_id:memberId });
-    if (error) throw error;
-    toast('Membership berhasil dihapus.', 'success');
-    await loadAll();
-  } catch (err) {
-    console.error(err);
-    toast(`Gagal menghapus membership: ${err.message}`, 'error');
-  }
-}
-
 document.querySelector('#membership-payment-submit').addEventListener('click', async () => {
   const action = state.pendingMembershipAction;
   const message = document.querySelector('#membership-payment-message');
@@ -462,10 +902,32 @@ document.querySelector('#membership-payment-submit').addEventListener('click', a
   }
 });
 
+function compareProductSku(left, right) {
+  const leftSku = String(left.sku || '');
+  const rightSku = String(right.sku || '');
+  const skuPattern = /^([a-z]+)-(\d+)$/i;
+  const leftParts = leftSku.match(skuPattern);
+  const rightParts = rightSku.match(skuPattern);
+
+  if (leftParts && rightParts) {
+    const prefixOrder = leftParts[1].localeCompare(rightParts[1], undefined, { sensitivity:'base' });
+    if (prefixOrder) return prefixOrder;
+
+    const leftSuffix = leftParts[2].replace(/^0+(?=\d)/, '');
+    const rightSuffix = rightParts[2].replace(/^0+(?=\d)/, '');
+    const suffixOrder = leftSuffix.length - rightSuffix.length ||
+      leftSuffix.localeCompare(rightSuffix) ||
+      leftParts[2].localeCompare(rightParts[2]);
+    if (suffixOrder) return suffixOrder;
+  }
+
+  return leftSku.localeCompare(rightSku, undefined, { numeric:true, sensitivity:'base' });
+}
+
 function renderProducts() {
   const q = document.querySelector('#product-search').value.trim().toLowerCase();
-  const rows = state.products.filter(p => [p.sku,p.name,p.category].some(v => String(v).toLowerCase().includes(q)));
-  document.querySelector('#products-body').innerHTML = rows.map(p => `<tr><td><span class="mono">${escapeHtml(p.sku)}</span></td><td><b>${escapeHtml(p.name)}</b></td><td>${escapeHtml(p.category)}</td><td>${money(p.price)}</td><td><span class="status-pill ${p.is_active ? 'active':'inactive'}">${p.is_active ? 'AVAILABLE':'NON-AVAILABLE'}</span></td><td><div class="product-actions"><button class="text-button" data-product-edit="${escapeHtml(p.id)}">Edit</button><button class="text-button product-action" data-product-availability="${escapeHtml(p.id)}" data-next-availability="${!p.is_active}">${p.is_active ? 'Non-available' : 'Jadikan available'}</button><button class="text-button status-action" data-product-delete="${escapeHtml(p.id)}">Hapus</button></div></td></tr>`).join('') || '<tr><td colspan="6" class="empty-cell">Produk tidak ditemukan.</td></tr>';
+  const rows = state.products.filter(p => [p.sku,p.name,p.category].some(v => String(v).toLowerCase().includes(q))).sort(compareProductSku);
+  document.querySelector('#products-body').innerHTML = rows.map(p => `<tr><td><span class="mono">${escapeHtml(p.sku)}</span></td><td><b>${escapeHtml(p.name)}</b></td><td>${escapeHtml(p.category)}</td><td>${money(p.price)}</td><td>${state.accountingReady ? money(p.cost) : '—'}</td><td><span class="status-pill ${p.is_active ? 'active':'inactive'}">${p.is_active ? 'AVAILABLE':'NON-AVAILABLE'}</span></td><td><div class="product-actions"><button class="text-button" data-product-edit="${escapeHtml(p.id)}">Edit</button><button class="text-button product-action" data-product-availability="${escapeHtml(p.id)}" data-next-availability="${!p.is_active}">${p.is_active ? 'Non-available' : 'Jadikan available'}</button><button class="text-button status-action" data-product-delete="${escapeHtml(p.id)}">Hapus</button></div></td></tr>`).join('') || '<tr><td colspan="7" class="empty-cell">Produk tidak ditemukan.</td></tr>';
   document.querySelectorAll('[data-product-availability]').forEach(button => button.addEventListener('click', () => setProductAvailability(button.dataset.productAvailability, button.dataset.nextAvailability === 'true')));
   document.querySelectorAll('[data-product-edit]').forEach(button => button.addEventListener('click', () => openProductEditor(button.dataset.productEdit)));
   document.querySelectorAll('[data-product-delete]').forEach(button => button.addEventListener('click', () => deleteProduct(button.dataset.productDelete)));
@@ -491,7 +953,14 @@ async function deleteProduct(productId) {
   try {
     const { error } = await db.rpc('delete_product', { p_product_id:productId });
     if (error) throw error;
-    toast('Produk berhasil dihapus.', 'success');
+    let imageCleanupWarning = false;
+    try {
+      await removeStoredProductImage(product.image_path);
+    } catch (imageError) {
+      console.error(imageError);
+      imageCleanupWarning = true;
+    }
+    toast(imageCleanupWarning ? 'Produk dihapus, tetapi gambar lama gagal dihapus dari Storage.' : 'Produk berhasil dihapus.', imageCleanupWarning ? 'warn' : 'success');
     await loadAll();
   } catch (err) {
     console.error(err);
@@ -523,6 +992,7 @@ function openProductEditor(productId) {
   state.editingProductId = productId;
   const form = document.querySelector('#product-form');
   form.reset();
+  resetProductImagePicker(product);
   form.elements.sku.value = product.sku;
   form.elements.name.value = product.name;
   form.elements.category.value = product.category;
@@ -534,6 +1004,54 @@ function openProductEditor(productId) {
   document.querySelector('#product-form-message').className = 'form-message';
   openModal('product-modal');
 }
+
+function setProductImagePreview(source) {
+  const image = document.querySelector('#product-image-preview');
+  const placeholder = document.querySelector('#product-image-placeholder');
+  image.onerror = () => {
+    image.hidden = true;
+    placeholder.textContent = 'Image unavailable';
+    placeholder.hidden = false;
+  };
+  placeholder.textContent = 'Select an image to preview';
+  image.hidden = !source;
+  placeholder.hidden = Boolean(source);
+  if (source) image.src = source;
+  else image.removeAttribute('src');
+}
+
+function resetProductImagePicker(product = null) {
+  const input = document.querySelector('#product-image-input');
+  if (productImagePreviewObjectUrl) URL.revokeObjectURL(productImagePreviewObjectUrl);
+  productImagePreviewObjectUrl = null;
+  input.value = '';
+  input.required = !product;
+  document.querySelector('#product-image-requirement').hidden = Boolean(product);
+  setProductImagePreview(product ? productImageUrl(product) : '');
+}
+
+document.querySelector('#product-image-input').addEventListener('change', event => {
+  const input = event.currentTarget;
+  const file = input.files[0];
+  if (!file) return;
+  const message = document.querySelector('#product-form-message');
+  try {
+    validateProductImage(file);
+    if (productImagePreviewObjectUrl) URL.revokeObjectURL(productImagePreviewObjectUrl);
+    productImagePreviewObjectUrl = URL.createObjectURL(file);
+    setProductImagePreview(productImagePreviewObjectUrl);
+    message.textContent = '';
+    message.className = 'form-message';
+  } catch (err) {
+    input.value = '';
+    if (productImagePreviewObjectUrl) URL.revokeObjectURL(productImagePreviewObjectUrl);
+    productImagePreviewObjectUrl = null;
+    const product = state.products.find(item => item.id === state.editingProductId);
+    setProductImagePreview(product ? productImageUrl(product) : '');
+    message.textContent = err.message;
+    message.className = 'form-message error';
+  }
+});
 
 function renderDashboard() {
   const now = new Date();
@@ -570,7 +1088,10 @@ function drawCharts() {
 }
 
 function openModal(id){ document.querySelector(`#${id}`).classList.add('open'); }
-function closeModal(id){ document.querySelector(`#${id}`).classList.remove('open'); }
+function closeModal(id){
+  document.querySelector(`#${id}`).classList.remove('open');
+  if (id === 'product-modal') resetProductImagePicker();
+}
 document.querySelector('#open-member-form').addEventListener('click', () => {
   state.editingMemberId = null;
   document.querySelector('#member-form').reset();
@@ -585,6 +1106,7 @@ document.querySelector('#open-member-form').addEventListener('click', () => {
 document.querySelector('#open-product-form').addEventListener('click', () => {
   state.editingProductId = null;
   document.querySelector('#product-form').reset();
+  resetProductImagePicker();
   document.querySelector('#product-modal-eyebrow').textContent = 'NEW PRODUCT';
   document.querySelector('#product-modal-title').textContent = 'Tambah Produk';
   document.querySelector('#product-form-submit').textContent = 'Simpan Produk';
@@ -628,30 +1150,57 @@ document.querySelector('#product-form').addEventListener('submit', async e => {
   e.preventDefault();
   const fd = new FormData(e.target);
   if (!configured) { document.querySelector('#product-form-message').textContent='Demo UI aktif. Hubungkan Supabase untuk menyimpan produk.'; document.querySelector('#product-form-message').className='form-message warn'; return; }
+  const editingProductId = state.editingProductId;
+  const imageFile = fd.get('image');
+  const hasImage = imageFile instanceof File && imageFile.size > 0;
+  const previousProduct = state.products.find(item => item.id === editingProductId);
+  let uploadedImagePath = null;
+  let imageCleanupWarning = false;
   const submit = document.querySelector('#product-form-submit');
   submit.disabled = true;
   const message = document.querySelector('#product-form-message');
   message.textContent = '';
   try {
+    if (!editingProductId && !hasImage) throw new Error('Pilih gambar untuk produk baru.');
+    if (hasImage) uploadedImagePath = await uploadProductImage(imageFile);
     const product = {
-      p_product_id:state.editingProductId,
+      p_product_id:editingProductId,
       p_sku:String(fd.get('sku')).trim().toUpperCase(),
       p_name:String(fd.get('name')).trim(),
       p_category:String(fd.get('category')).trim(),
-      p_price:Number(fd.get('price'))
+      p_price:Number(fd.get('price')),
+      p_image_path:uploadedImagePath
     };
-    const result = state.editingProductId
+    const result = editingProductId
       ? await db.rpc('update_product_details', product)
-      : await db.from('products').insert({ sku:product.p_sku, name:product.p_name, category:product.p_category, price:product.p_price, is_active:true });
+      : await db.from('products').insert({ sku:product.p_sku, name:product.p_name, category:product.p_category, price:product.p_price, image_path:uploadedImagePath, is_active:true });
     const { error } = result;
     if (error) throw error;
-    toast(state.editingProductId ? 'Produk berhasil diperbarui.' : 'Produk baru berhasil ditambahkan.', 'success');
+    if (uploadedImagePath && isStoredProductImage(previousProduct?.image_path)) {
+      try {
+        await removeStoredProductImage(previousProduct.image_path);
+      } catch (imageError) {
+        console.error(imageError);
+        imageCleanupWarning = true;
+      }
+    }
+    toast(imageCleanupWarning ? 'Produk tersimpan, tetapi gambar sebelumnya gagal dihapus.' : editingProductId ? 'Produk berhasil diperbarui.' : 'Produk baru berhasil ditambahkan.', imageCleanupWarning ? 'warn' : 'success');
     state.editingProductId = null;
     e.target.reset(); closeModal('product-modal'); await loadAll();
-  } catch(err){ message.textContent = err.message; message.className = 'form-message error'; }
+  } catch(err){
+    if (uploadedImagePath) {
+      try {
+        await removeStoredProductImage(uploadedImagePath);
+      } catch (imageError) {
+        console.error(imageError);
+      }
+    }
+    message.textContent = err.message;
+    message.className = 'form-message error';
+  }
   finally { submit.disabled = false; }
 });
 
-window.addEventListener('keydown', e => { if(e.key==='Escape') document.querySelectorAll('.modal-backdrop.open').forEach(m=>m.classList.remove('open')); });
+window.addEventListener('keydown', e => { if(e.key==='Escape') document.querySelectorAll('.modal-backdrop.open').forEach(m=>closeModal(m.id)); });
 
 loadAll();
