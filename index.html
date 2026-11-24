@@ -24,9 +24,11 @@
     <div class="sidebar-divider"></div>
     <nav class="nav-list">
       <button class="nav-item active" data-view="dashboard"><span>◒</span> Dashboard</button>
-      <button class="nav-item" data-view="sales"><span>＋</span> Penjualan</button>
+      <button class="nav-item" data-view="sales"><span>＋</span> Sales</button>
+      <button class="nav-item" data-view="transaction-history"><span>↻</span> Transaction History</button>
       <button class="nav-item" data-view="membership"><span>✦</span> Membership</button>
-      <button class="nav-item" data-view="products"><span>▦</span> Produk</button>
+      <button class="nav-item" data-view="products"><span>▦</span> Products</button>
+      <button class="nav-item" data-view="accounting"><span>▤</span> Accounting &amp; Finance</button>
     </nav>
     <div class="sidebar-footer glass-soft">
       <div class="mini-label">PRIVACY MODE</div>
@@ -80,7 +82,7 @@
 
       <div class="dashboard-grid lower-grid">
         <article class="glass panel">
-          <div class="panel-heading"><div><p class="eyebrow">RECENT ACTIVITY</p><h3>Transaksi Terbaru</h3></div><button class="text-button" data-go="sales">Lihat semua →</button></div>
+          <div class="panel-heading"><div><p class="eyebrow">RECENT ACTIVITY</p><h3>Transaksi Terbaru</h3></div><button class="text-button" data-go="transaction-history">Lihat semua →</button></div>
           <div class="table-wrap"><table><thead><tr><th>Receipt</th><th>Member</th><th>Subtotal</th><th>Discount</th><th>Total</th></tr></thead><tbody id="recent-sales-body"></tbody></table></div>
         </article>
         <article class="glass panel insight-card">
@@ -121,9 +123,19 @@
           <div id="checkout-message" class="form-message"></div>
         </aside>
       </div>
+    </section>
+
+    <section class="view" id="view-transaction-history">
       <article class="glass panel" id="sales-history">
-        <div class="panel-heading"><div><p class="eyebrow">TRANSACTION RECORDS</p><h3>Riwayat Transaksi</h3></div></div>
-        <div class="table-wrap"><table><thead><tr><th>Receipt</th><th>Waktu</th><th>Member</th><th>Total</th><th>Pembayaran</th><th>Aksi</th></tr></thead><tbody id="sales-history-body"></tbody></table></div>
+        <div class="panel-heading transaction-history-heading">
+          <div><p class="eyebrow">TRANSACTION RECORDS</p><h3>Transaction History</h3></div>
+          <div class="transaction-filters" role="group" aria-label="Filter transaction types">
+            <button class="filter-chip active" type="button" data-transaction-filter="ALL" aria-pressed="true">All Transactions</button>
+            <button class="filter-chip" type="button" data-transaction-filter="SALE" aria-pressed="false">Sales</button>
+            <button class="filter-chip" type="button" data-transaction-filter="MEMBERSHIP" aria-pressed="false">Membership</button>
+          </div>
+        </div>
+        <div class="table-wrap"><table class="transaction-history-table"><thead><tr><th>Receipt</th><th>Date</th><th>Type</th><th>Transaction</th><th>Membership No.</th><th>Amount</th><th>Payment</th><th>Action</th></tr></thead><tbody id="sales-history-body"></tbody></table></div>
       </article>
     </section>
 
@@ -149,17 +161,64 @@
       <div class="section-head"><div><p class="eyebrow">PRODUCT CATALOG</p><h2>Produk</h2><p class="section-copy">Kelola menu yang muncul di POS tanpa menambah kompleksitas inventory.</p></div><button class="primary-button compact" id="open-product-form">＋ Produk Baru</button></div>
       <article class="glass panel">
         <div class="panel-heading"><div><h3>Menu Catalog</h3><p class="micro-copy">Harga menjadi sumber unit price pada transaksi.</p></div><input id="product-search" class="search-input" placeholder="Cari produk…"></div>
-        <div class="table-wrap"><table><thead><tr><th>SKU</th><th>Produk</th><th>Kategori</th><th>Harga</th><th>Status</th><th>Aksi</th></tr></thead><tbody id="products-body"></tbody></table></div>
+        <div class="table-wrap"><table><thead><tr><th>SKU</th><th>Produk</th><th>Kategori</th><th>Harga Jual</th><th>Harga Pokok</th><th>Status</th><th>Aksi</th></tr></thead><tbody id="products-body"></tbody></table></div>
       </article>
     </section>
 
+    <section class="view" id="view-accounting">
+      <div class="section-head">
+        <div><p class="eyebrow">ACCOUNTING &amp; FINANCE</p><h2>Accounting</h2><p class="section-copy">General Journal and Revenue Report.</p></div>
+      </div>
+      <div class="accounting-tabs" role="tablist" aria-label="Accounting features">
+        <button class="filter-chip active" type="button" data-accounting-tab="journal" role="tab" aria-selected="true">General Journal</button>
+        <button class="filter-chip" type="button" data-accounting-tab="revenue-report" role="tab" aria-selected="false">Revenue Report</button>
+      </div>
+      <p class="form-message warn accounting-setup-message" id="accounting-setup-message" hidden></p>
+
+      <div class="accounting-pane active" id="accounting-pane-journal" role="tabpanel">
+        <article class="glass panel">
+          <div class="panel-heading">
+          <div><p class="eyebrow">READ-ONLY POSTINGS</p><h3>General Journal</h3></div>
+          </div>
+          <div class="table-wrap"><table class="accounting-table journal-table"><thead><tr><th>Journal No.</th><th>Date</th><th>Reference</th><th>Account</th><th>Description</th><th>Debit</th><th>Credit</th></tr></thead><tbody id="journal-body"></tbody><tfoot><tr><th colspan="5">Total</th><th id="journal-total-debit">Rp 0</th><th id="journal-total-credit">Rp 0</th></tr></tfoot></table></div>
+        </article>
+      </div>
+
+      <div class="accounting-pane" id="accounting-pane-revenue-report" role="tabpanel" hidden>
+        <article class="glass panel revenue-report">
+          <div class="panel-heading">
+          <div><p class="eyebrow">REVENUE SUMMARY</p><h3>Revenue Report</h3><p class="micro-copy" id="revenue-report-period-label"></p></div>
+          <div class="accounting-report-actions"><button class="filter-chip" id="print-revenue-report" type="button">Print</button><button class="filter-chip" id="export-revenue-report" type="button">Export CSV</button></div>
+          </div>
+          <div class="accounting-report-filters">
+          <label class="field-label">Reporting Period<select class="input-control" id="revenue-period"><option value="month">Monthly</option><option value="quarter">Quarterly</option><option value="year">Yearly</option><option value="custom">Custom Range</option></select></label>
+          <label class="field-label">From<input class="input-control" id="revenue-date-from" type="date"></label>
+          <label class="field-label">To<input class="input-control" id="revenue-date-to" type="date"></label>
+          <button class="primary-button compact accounting-action" id="apply-revenue-period" type="button">Apply</button>
+          </div>
+          <div class="transaction-filters revenue-filters" role="group" aria-label="Filter revenue types">
+          <button class="filter-chip active" type="button" data-revenue-filter="ALL" aria-pressed="true">All Revenue</button>
+          <button class="filter-chip" type="button" data-revenue-filter="SALE" aria-pressed="false">Sales</button>
+          <button class="filter-chip" type="button" data-revenue-filter="MEMBERSHIP" aria-pressed="false">Membership</button>
+          </div>
+          <div class="revenue-report-grid">
+          <div class="table-wrap"><table class="revenue-summary"><tbody>
+            <tr><th>Sales Revenue</th><td id="revenue-sales">Rp 0</td></tr>
+            <tr><th>Membership Revenue</th><td id="revenue-membership">Rp 0</td></tr>
+            <tr class="statement-total"><th>Total Revenue</th><td id="revenue-total">Rp 0</td></tr>
+          </tbody></table></div>
+          <div class="revenue-chart-wrap"><canvas id="revenueChart" aria-label="Sales and membership revenue chart"></canvas></div>
+          </div>
+        </article>
+      </div>
+    </section>
+
     <div class="modal-backdrop" id="member-modal"><div class="modal glass"><button class="modal-close" data-close="member-modal">×</button><p class="eyebrow" id="member-modal-eyebrow">NEW MEMBER</p><h3 id="member-modal-title">Tambah Membership</h3><p class="micro-copy">Gunakan nomor anonim, tanpa nama pelanggan.</p><form id="member-form"><label class="field-label">Membership Number<input required maxlength="20" name="membership_number" class="input-control" placeholder="BRW-0007"></label><label class="field-label">Tanggal Bergabung<input required type="date" name="joined_at" class="input-control"></label><div id="member-new-payment-fields"><label class="field-label">Metode Pembayaran<select name="payment_method" class="input-control"><option value="CASH">Cash</option><option value="QRIS">QRIS</option><option value="DEBIT">Debit</option><option value="EWALLET">E-Wallet</option></select></label><p class="micro-copy">Iuran bulan pertama: <b id="new-member-fee">Rp 35.000</b></p></div><button class="primary-button" id="member-form-submit" type="submit">Simpan &amp; Bayar</button></form><div id="member-form-message" class="form-message"></div></div></div>
-    <div class="modal-backdrop" id="product-modal"><div class="modal glass"><button class="modal-close" data-close="product-modal">×</button><p class="eyebrow" id="product-modal-eyebrow">NEW PRODUCT</p><h3 id="product-modal-title">Tambah Produk</h3><form id="product-form"><label class="field-label">SKU<input required maxlength="30" name="sku" class="input-control" placeholder="CF-007"></label><label class="field-label">Nama Produk<input required maxlength="100" name="name" class="input-control" placeholder="Vanilla Cloud"></label><label class="field-label">Kategori<select name="category" class="input-control"><option>Coffee</option><option>Non-Coffee</option><option>Pastry</option><option>Snack</option></select></label><label class="field-label">Harga<input required min="0" step="500" type="number" name="price" class="input-control" placeholder="30000"></label><button class="primary-button" id="product-form-submit" type="submit">Simpan Produk</button></form><div id="product-form-message" class="form-message"></div></div></div>
-    <div class="modal-backdrop" id="sale-edit-modal"><div class="modal glass sale-edit-modal"><button class="modal-close" data-close="sale-edit-modal">×</button><p class="eyebrow">CORRECT TRANSACTION</p><h3 id="sale-edit-title">Edit Transaksi</h3><form id="sale-edit-form"><label class="field-label" for="sale-edit-member">Membership<select id="sale-edit-member" class="input-control"><option value="">Walk-in</option></select></label><label class="field-label" for="sale-edit-payment">Metode Pembayaran<select id="sale-edit-payment" class="input-control"><option value="CASH">Cash</option><option value="QRIS">QRIS</option><option value="DEBIT">Debit</option><option value="EWALLET">E-Wallet</option></select></label><div class="sale-edit-items-heading"><h4>Item transaksi</h4><button class="small-button" id="add-sale-item" type="button">＋ Item</button></div><div id="sale-edit-items" class="sale-edit-items"></div><div class="form-message" id="sale-edit-message"></div><button class="primary-button" id="sale-edit-submit" type="submit">Simpan revisi</button></form></div></div>
+    <div class="modal-backdrop" id="product-modal"><div class="modal glass product-modal"><button class="modal-close" data-close="product-modal">×</button><p class="eyebrow" id="product-modal-eyebrow">NEW PRODUCT</p><h3 id="product-modal-title">Tambah Produk</h3><form id="product-form"><label class="field-label">SKU<input required maxlength="30" name="sku" class="input-control" placeholder="CF-007"></label><label class="field-label">Nama Produk<input required maxlength="100" name="name" class="input-control" placeholder="Vanilla Cloud"></label><label class="field-label">Kategori<select name="category" class="input-control"><option>Coffee</option><option>Non-Coffee</option><option>Pastry</option><option>Snack</option></select></label><label class="field-label">Harga Jual<input required min="0" step="500" type="number" name="price" class="input-control" placeholder="30000"></label><div class="product-image-field"><label class="field-label" for="product-image-input">Product Image <span id="product-image-requirement">(required for new products)</span><input id="product-image-input" type="file" name="image" class="input-control" accept=".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp"></label><p class="micro-copy">JPG, JPEG, PNG, or WEBP · max 5 MB</p><div class="product-image-preview-frame"><img id="product-image-preview" alt="Product image preview" hidden><span id="product-image-placeholder">Select an image to preview</span></div></div><button class="primary-button" id="product-form-submit" type="submit">Simpan Produk</button></form><div id="product-form-message" class="form-message"></div></div></div>
     <div class="modal-backdrop" id="sale-detail-modal"><div class="modal glass"><button class="modal-close" data-close="sale-detail-modal">×</button><p class="eyebrow">TRANSACTION DETAIL</p><h3 id="sale-detail-title">Detail Transaksi</h3><div id="sale-detail-content" class="table-wrap"></div></div></div>
     <div class="modal-backdrop" id="membership-payment-modal"><div class="modal glass"><button class="modal-close" data-close="membership-payment-modal">×</button><p class="eyebrow">MEMBERSHIP BILLING</p><h3 id="membership-payment-title">Pembayaran Membership</h3><div id="membership-payment-summary" class="membership-payment-summary"></div><label class="field-label" for="membership-payment-method">Metode Pembayaran<select id="membership-payment-method" class="input-control"><option value="CASH">Cash</option><option value="QRIS">QRIS</option><option value="DEBIT">Debit</option><option value="EWALLET">E-Wallet</option></select></label><button class="primary-button" id="membership-payment-submit" type="button">Bayar</button><div id="membership-payment-message" class="form-message"></div></div></div>
 
-    <footer class="footer">Brew & Benefits · SIA Coffee Shop Demo · Supabase PostgreSQL · 4 core entities</footer>
+    <footer class="footer">Brew & Benefits · POS · Membership · Accounting · Supabase PostgreSQL</footer>
   </main>
 
   <div class="toast" id="toast"></div>
