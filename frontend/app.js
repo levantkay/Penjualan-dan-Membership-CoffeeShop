@@ -63,7 +63,7 @@ const state = {
 };
 
 const customerDisplayChannel = 'BroadcastChannel' in window
-  ? new BroadcastChannel('brew-benefits-customer-display')
+  ? new BroadcastChannel('marwid-coffee-space-customer-display')
   : null;
 const BUSINESS_TIME_ZONE = 'Asia/Jakarta';
 const money = n => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(Number(n || 0));
@@ -216,7 +216,7 @@ window.addEventListener('afterprint', () => {
 document.querySelector('#today-pill').textContent = new Date().toLocaleDateString('id-ID', { weekday:'short', day:'2-digit', month:'short', year:'numeric' });
 document.querySelector('#refresh-btn').addEventListener('click', loadAll);
 document.querySelector('#open-customer-display').addEventListener('click', () => {
-  const displayWindow = window.open(new URL('./frontend/customer-display.html', window.location.href), 'brew-benefits-customer-display');
+  const displayWindow = window.open(new URL('./frontend/customer-display.html', window.location.href), 'marwid-coffee-space-customer-display');
   if (!displayWindow) {
     toast('Izinkan pop-up untuk membuka Customer Display.', 'warn');
     return;
@@ -662,7 +662,7 @@ function renderRevenueChart(totals, printMode = false) {
       labels:['Sales Revenue', 'Membership Revenue'],
       datasets:[{
         data:[totals.salesRevenue, totals.membershipRevenue],
-        backgroundColor:['rgba(214,160,84,.78)', 'rgba(126,161,137,.78)'],
+        backgroundColor:['rgba(185,135,82,.78)', 'rgba(119,116,95,.78)'],
         borderRadius:8,
         borderSkipped:false
       }]
@@ -950,13 +950,13 @@ async function showTransactionDetail(transactionId) {
   if (!transaction) return;
   const content = document.querySelector('#sale-detail-content');
   document.querySelector('#sale-detail-title').textContent = transaction.receiptNo
-    ? `Receipt ${transaction.receiptNo}`
-    : `${transaction.label}`;
+    ? `Marwid Coffee and Space · Receipt ${transaction.receiptNo}`
+    : `Marwid Coffee and Space · ${transaction.label}`;
   if (transaction.type === 'MEMBERSHIP') {
     const payment = transaction.payment;
     document.querySelector('#sale-detail-title').textContent = transaction.receiptNo
-      ? `Receipt ${transaction.receiptNo}`
-      : 'Membership Payment';
+      ? `Marwid Coffee and Space · Receipt ${transaction.receiptNo}`
+      : 'Marwid Coffee and Space · Membership Payment';
     content.innerHTML = `<p class="micro-copy">${dateTimeFmt(transaction.date)}</p><div class="membership-payment-summary"><div><span>Membership No.</span><b>${escapeHtml(transaction.memberNumber)}</b></div><div><span>Transaction Type</span><b>${escapeHtml(transaction.label)}</b></div><div><span>Payment Method</span><b>${escapeHtml(transaction.paymentMethod)}</b></div><div class="summary-total"><span>Payment Amount</span><strong>${money(transaction.amount)}</strong></div>${payment.coverage_start || payment.coverage_end ? `<p class="micro-copy">Coverage: ${payment.coverage_start ? dateFmt(payment.coverage_start) : '—'} – ${payment.coverage_end ? dateFmt(payment.coverage_end) : '—'}</p>` : ''}</div>`;
     openModal('sale-detail-modal');
     return;
@@ -1079,7 +1079,7 @@ async function checkout() {
     }));
     const { error: lineError } = await db.from('sale_items').insert(lineRows);
     if (lineError) throw lineError;
-    toast(`Transaksi ${receipt} berhasil disimpan.`, 'success');
+    toast(`Marwid Coffee and Space · Transaksi ${receipt} berhasil disimpan.`, 'success');
     state.lastCompletedSale = {
       receiptNo:receipt,
       items:state.cart.map(item => ({
@@ -1357,8 +1357,8 @@ function drawCharts() {
   if (!Chart) return;
   if (state.charts.sales) state.charts.sales.destroy();
   if (state.charts.membership) state.charts.membership.destroy();
-  state.charts.sales = new Chart(document.querySelector('#salesChart'), { type:'bar', data:{labels:salesByDay.map(x=>x.label),datasets:[{data:salesByDay.map(x=>x.val),borderRadius:8,borderSkipped:false,backgroundColor:'rgba(214,160,84,.72)'}]}, options:{plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{color:'#bdb4aa'}},y:{grid:{color:'rgba(255,255,255,.06)'},ticks:{color:'#bdb4aa', callback:v=>`Rp ${Math.round(v/1000)}k`}}}} });
-  state.charts.membership = new Chart(document.querySelector('#membershipChart'), { type:'doughnut', data:{labels:['Bronze','Silver','Gold'],datasets:[{data:[counts.BRONZE,counts.SILVER,counts.GOLD],backgroundColor:['#a97649','#9ea5ad','#d6a054'],borderColor:'rgba(25,18,14,.8)',borderWidth:4}]}, options:{cutout:'72%',plugins:{legend:{display:false}}} });
+  state.charts.sales = new Chart(document.querySelector('#salesChart'), { type:'bar', data:{labels:salesByDay.map(x=>x.label),datasets:[{data:salesByDay.map(x=>x.val),borderRadius:8,borderSkipped:false,backgroundColor:'rgba(185,135,82,.72)'}]}, options:{plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{color:'#bdb4aa'}},y:{grid:{color:'rgba(255,255,255,.06)'},ticks:{color:'#bdb4aa', callback:v=>`Rp ${Math.round(v/1000)}k`}}}} });
+  state.charts.membership = new Chart(document.querySelector('#membershipChart'), { type:'doughnut', data:{labels:['Bronze','Silver','Gold'],datasets:[{data:[counts.BRONZE,counts.SILVER,counts.GOLD],backgroundColor:['#a97649','#9ea5ad','#B98752'],borderColor:'rgba(25,19,15,.8)',borderWidth:4}]}, options:{cutout:'72%',plugins:{legend:{display:false}}} });
   document.querySelector('#tier-legend').innerHTML = [['bronze','Bronze',counts.BRONZE],['silver','Silver',counts.SILVER],['gold','Gold',counts.GOLD]].map(([c,n,v])=>`<span><i class="tier-dot ${c}"></i>${n} <b>${v}</b></span>`).join('');
 }
 
