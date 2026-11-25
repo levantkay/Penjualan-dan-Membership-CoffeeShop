@@ -86,6 +86,8 @@ Level membership tidak dibuat sebagai tabel sendiri. Tier dan discount dihitung 
 
 **Penjualan** berfungsi sebagai POS sederhana dengan product cards, cart, membership checker, discount calculation, payment method, dan checkout.
 
+**Customer Display** membuka layar pelanggan terpisah dari tombol di halaman Penjualan. Keranjang, diskon membership, total, dan metode pembayaran disinkronkan langsung antartab/jendela dengan `BroadcastChannel`; layar pelanggan menyediakan tampilan idle, konfirmasi transaksi, dan fullscreen. Buka jendela tersebut di monitor kedua dengan memindahkannya secara manual. Untuk transaksi tunai, POS saat ini tidak mencatat nominal uang yang diserahkan atau kembalian, jadi layar pelanggan menandai kedua nilai itu sebagai tidak tercatat.
+
 **Membership** menampilkan directory anonim, pencarian membership number, tenure, tier, discount, dan form penambahan member.
 
 Nomor membership dan tanggal bergabung dapat dikoreksi melalui tombol **Edit**. Perubahan tanggal akan menghitung ulang tenure dan tier; catatan pembayaran yang sudah tersimpan tidak diubah. Membership tanpa transaksi atau pembayaran dapat dihapus; yang memiliki riwayat hanya dapat dinonaktifkan.
