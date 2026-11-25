@@ -3,7 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Brew & Benefits — Coffee POS</title>
+  <meta name="description" content="Marwid Coffee and Space point-of-sale and membership management." />
+  <meta name="theme-color" content="#19130F" />
+  <title>Marwid Coffee and Space — Coffee POS</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@500;600;700&display=swap" rel="stylesheet">
@@ -15,9 +17,9 @@
 
   <aside class="sidebar glass">
     <div class="brand">
-      <div class="brand-icon">☕</div>
+      <div class="brand-icon" aria-hidden="true">M</div>
       <div>
-        <div class="brand-title">Brew & Benefits</div>
+        <div class="brand-title">Marwid Coffee<br>and Space</div>
         <div class="brand-subtitle">Coffee · POS · Membership</div>
       </div>
     </div>
@@ -40,7 +42,7 @@
   <main class="content">
     <header class="topbar">
       <div>
-        <p class="eyebrow">GOOD COFFEE, CLEAN RECORDS</p>
+        <p class="eyebrow">A WELCOMING SPACE FOR GOOD COFFEE</p>
         <h1 id="page-title">Dashboard</h1>
       </div>
       <div class="topbar-actions">
@@ -52,7 +54,7 @@
     <section class="view active-view" id="view-dashboard">
       <div class="hero glass hero-card">
         <div>
-          <span class="chip chip-gold">COFFEE SHOP CONTROL CENTER</span>
+          <span class="chip chip-gold">MARWID · COFFEE HOUSE &amp; CREATIVE SPACE</span>
           <h2>Penjualan simpel. Membership yang <span class="accent">makin worth it.</span></h2>
         </div>
         <div class="hero-orbit">
@@ -229,7 +231,7 @@
     <div class="modal-backdrop" id="sale-detail-modal"><div class="modal glass"><button class="modal-close" data-close="sale-detail-modal">×</button><p class="eyebrow">TRANSACTION DETAIL</p><h3 id="sale-detail-title">Detail Transaksi</h3><div id="sale-detail-content" class="table-wrap"></div></div></div>
     <div class="modal-backdrop" id="membership-payment-modal"><div class="modal glass"><button class="modal-close" data-close="membership-payment-modal">×</button><p class="eyebrow">MEMBERSHIP BILLING</p><h3 id="membership-payment-title">Pembayaran Membership</h3><div id="membership-payment-summary" class="membership-payment-summary"></div><label class="field-label" for="membership-payment-method">Metode Pembayaran<select id="membership-payment-method" class="input-control"><option value="CASH">Cash</option><option value="QRIS">QRIS</option><option value="DEBIT">Debit</option><option value="EWALLET">E-Wallet</option></select></label><button class="primary-button" id="membership-payment-submit" type="button">Bayar</button><div id="membership-payment-message" class="form-message"></div></div></div>
 
-    <footer class="footer">Brew & Benefits · POS · Membership · Accounting · Supabase PostgreSQL</footer>
+    <footer class="footer">Marwid Coffee and Space · POS · Membership · Accounting · Supabase PostgreSQL</footer>
   </main>
 
   <div class="toast" id="toast"></div>
