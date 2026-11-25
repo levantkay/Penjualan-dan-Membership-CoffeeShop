@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#110d0b" />
+  <title>Brew &amp; Benefits — Customer Display</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body class="customer-display-page">
+  <div class="customer-display-ambient customer-display-ambient-one"></div>
+  <div class="customer-display-ambient customer-display-ambient-two"></div>
+  <div class="customer-display-shell">
+    <header class="customer-display-header">
+      <a class="customer-display-brand" href="../index.html" aria-label="Brew & Benefits">
+        <span class="customer-display-logo" aria-hidden="true">☕</span>
+        <span><b>Brew &amp; Benefits</b><small>COFFEE · COMMUNITY · GOODNESS</small></span>
+      </a>
+      <div class="customer-display-header-actions">
+        <span class="customer-display-live"><i></i><span id="display-connection">Connecting</span></span>
+        <button class="customer-display-fullscreen" id="display-fullscreen" type="button" aria-pressed="false">⛶ Fullscreen</button>
+      </div>
+    </header>
+
+    <main class="customer-display-main">
+      <section class="customer-idle-view" id="display-idle">
+        <div class="customer-idle-art" aria-hidden="true">
+          <span class="customer-idle-bean bean-one">✦</span>
+          <span class="customer-idle-bean bean-two">✧</span>
+          <div class="customer-idle-cup">☕</div>
+          <span class="customer-idle-bean bean-three">✦</span>
+        </div>
+        <p class="customer-display-eyebrow">A LITTLE MOMENT, MADE BETTER</p>
+        <h1>Welcome to <span>Brew &amp; Benefits!</span></h1>
+        <p class="customer-idle-copy">Freshly brewed, thoughtfully made.<br>We’re happy you’re here.</p>
+        <div class="customer-idle-divider"><span>✦</span></div>
+        <p class="customer-idle-footnote">Take a look around and find your new favorite.</p>
+      </section>
+
+      <section class="customer-order-view" id="display-order" hidden>
+        <div class="customer-order-heading">
+          <div>
+            <p class="customer-display-eyebrow">MADE JUST FOR YOU</p>
+            <h1>Your order</h1>
+          </div>
+          <span class="customer-order-count" id="display-item-count"></span>
+        </div>
+        <div class="customer-order-layout">
+          <div class="customer-order-items" id="display-items"></div>
+          <aside class="customer-order-summary">
+            <p class="customer-display-eyebrow">ORDER SUMMARY</p>
+            <div class="customer-summary-row"><span>Subtotal</span><b id="display-subtotal"></b></div>
+            <div class="customer-summary-row customer-discount-row" id="display-discount-row" hidden><span>Membership discount <b id="display-discount-rate"></b></span><b id="display-discount"></b></div>
+            <div class="customer-summary-total"><span>Total</span><strong id="display-total"></strong></div>
+            <div class="customer-summary-payment"><span>Payment method</span><b id="display-payment"></b></div>
+            <div class="customer-cash-details" id="display-cash-details" hidden>
+              <div><span>Cash received</span><b>Not recorded</b></div>
+              <div><span>Change</span><b>Not tracked</b></div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="customer-complete-view" id="display-complete" hidden>
+        <div class="customer-complete-mark" aria-hidden="true">✓</div>
+        <p class="customer-display-eyebrow">ORDER COMPLETE</p>
+        <h1>Thank you for stopping by!</h1>
+        <p>Your order is being prepared with care.</p>
+        <div class="customer-receipt-card">
+          <span>ORDER TOTAL</span>
+          <strong id="display-complete-total"></strong>
+          <div class="customer-complete-items" id="display-complete-items"></div>
+          <div class="customer-complete-payment"><span>Subtotal</span><b id="display-complete-subtotal"></b></div>
+          <div class="customer-complete-discount" id="display-complete-discount" hidden></div>
+          <div class="customer-complete-payment"><span>Payment method</span><b id="display-complete-payment"></b></div>
+          <div class="customer-cash-details" id="display-complete-cash-details" hidden>
+            <div><span>Cash received</span><b>Not recorded</b></div>
+            <div><span>Change</span><b>Not tracked</b></div>
+          </div>
+          <small id="display-receipt"></small>
+        </div>
+        <p class="customer-complete-signoff">We hope you enjoy every sip. <span>☕</span></p>
+      </section>
+    </main>
+    <footer class="customer-display-footer"><span>☕</span> Crafted with care at Brew &amp; Benefits</footer>
+  </div>
+  <script src="./customer-display.js"></script>
+</body>
+</html>
