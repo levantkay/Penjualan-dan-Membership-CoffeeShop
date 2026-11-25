@@ -1,7 +1,7 @@
-# Brew & Benefits — Coffee Shop Sales + Membership System
+# Marwid Coffee and Space — Coffee Shop Sales + Membership System
 
 Sistem informasi akuntansi mini untuk coffee shop yang memadukan **penjualan dasar (POS)** dan **membership berbasis nomor anonim**.
-* **Demo aplikasi:** [Buka Brew & Benefits](https://levantkay.github.io/Penjualan-dan-Membership-CoffeeShop/)
+* **Demo aplikasi:** [Buka Marwid Coffee and Space](https://levantkay.github.io/Penjualan-dan-Membership-CoffeeShop/)
 
 ## Identitas tugas
 
@@ -28,10 +28,12 @@ Sistem informasi akuntansi mini untuk coffee shop yang memadukan **penjualan das
 ## Struktur folder
 ```text
 coffee_membership_system/
+├── index.html
 ├── frontend/
-│   ├── index.html
 │   ├── styles.css
-│   └── app.js
+│   ├── app.js
+│   ├── customer-display.html
+│   └── customer-display.js
 └── backend/
     ├── schema.sql
     ├── accounting_migration.sql
@@ -86,7 +88,7 @@ Level membership tidak dibuat sebagai tabel sendiri. Tier dan discount dihitung 
 
 **Penjualan** berfungsi sebagai POS sederhana dengan product cards, cart, membership checker, discount calculation, payment method, dan checkout.
 
-**Customer Display** membuka layar pelanggan terpisah dari tombol di halaman Penjualan. Keranjang, diskon membership, total, dan metode pembayaran disinkronkan langsung antartab/jendela dengan `BroadcastChannel`; layar pelanggan menyediakan tampilan idle, konfirmasi transaksi, dan fullscreen. Buka jendela tersebut di monitor kedua dengan memindahkannya secara manual. Untuk transaksi tunai, POS saat ini tidak mencatat nominal uang yang diserahkan atau kembalian, jadi layar pelanggan menandai kedua nilai itu sebagai tidak tercatat.
+**Customer Display** untuk Marwid Coffee and Space membuka layar pelanggan terpisah dari tombol di halaman Penjualan. Keranjang, diskon membership, total, dan metode pembayaran disinkronkan langsung antartab/jendela dengan `BroadcastChannel`; layar pelanggan menyediakan tampilan idle, konfirmasi transaksi, dan fullscreen. Buka jendela tersebut di monitor kedua dengan memindahkannya secara manual. Untuk transaksi tunai, POS saat ini tidak mencatat nominal uang yang diserahkan atau kembalian, jadi layar pelanggan menandai kedua nilai itu sebagai tidak tercatat.
 
 **Membership** menampilkan directory anonim, pencarian membership number, tenure, tier, discount, dan form penambahan member.
 
