@@ -58,9 +58,13 @@ const state = {
   revenueRange: null,
   revenueQueryId: 0,
   revenueLoading: false,
-  charts: {}
+  charts: {},
+  lastCompletedSale: null
 };
 
+const customerDisplayChannel = 'BroadcastChannel' in window
+  ? new BroadcastChannel('brew-benefits-customer-display')
+  : null;
 const BUSINESS_TIME_ZONE = 'Asia/Jakarta';
 const money = n => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(Number(n || 0));
 function dateValue(value) {
@@ -211,6 +215,19 @@ window.addEventListener('afterprint', () => {
 
 document.querySelector('#today-pill').textContent = new Date().toLocaleDateString('id-ID', { weekday:'short', day:'2-digit', month:'short', year:'numeric' });
 document.querySelector('#refresh-btn').addEventListener('click', loadAll);
+document.querySelector('#open-customer-display').addEventListener('click', () => {
+  const displayWindow = window.open(new URL('./frontend/customer-display.html', window.location.href), 'brew-benefits-customer-display');
+  if (!displayWindow) {
+    toast('Izinkan pop-up untuk membuka Customer Display.', 'warn');
+    return;
+  }
+  displayWindow.focus();
+});
+if (customerDisplayChannel) {
+  customerDisplayChannel.onmessage = event => {
+    if (event.data?.type === 'request-state') publishCustomerDisplay();
+  };
+}
 
 function membershipRule(joinedAt) {
   const joined = new Date(joinedAt);
@@ -834,6 +851,7 @@ function renderPOS() {
 function addToCart(id) {
   const product = state.products.find(p => p.id === id);
   if (!product) return;
+  state.lastCompletedSale = null;
   const current = state.cart.find(i => i.product.id === id);
   if (current) current.qty += 1; else state.cart.push({ product, qty: 1 });
   renderCart();
@@ -970,12 +988,13 @@ async function showTransactionDetail(transactionId) {
 function changeQty(id, delta) {
   const row = state.cart.find(i => i.product.id === id);
   if (!row) return;
+  state.lastCompletedSale = null;
   row.qty += delta;
   if (row.qty <= 0) state.cart = state.cart.filter(i => i.product.id !== id);
   renderCart();
 }
 
-document.querySelector('#clear-cart').addEventListener('click', () => { state.cart = []; state.memberLookup = null; document.querySelector('#member-number').value = ''; document.querySelector('#member-status').textContent='Belum ada member.'; renderCart(); });
+document.querySelector('#clear-cart').addEventListener('click', () => { state.cart = []; state.memberLookup = null; state.lastCompletedSale = null; document.querySelector('#member-number').value = ''; document.querySelector('#member-status').textContent='Belum ada member.'; renderCart(); });
 
 function currentDiscount() {
   const member = state.memberLookup;
@@ -990,10 +1009,37 @@ function updateSummary() {
   document.querySelector('#cart-subtotal').textContent = money(subtotal);
   document.querySelector('#cart-discount').textContent = `- ${money(discountAmount)}`;
   document.querySelector('#cart-total').textContent = money(total);
+  publishCustomerDisplay();
+}
+
+function publishCustomerDisplay() {
+  if (!customerDisplayChannel) return;
+  const completed = state.lastCompletedSale;
+  const items = completed?.items || state.cart.map(item => ({
+    name:item.product.name,
+    price:Number(item.product.price),
+    qty:item.qty,
+    imageUrl:productImageUrl(item.product)
+  }));
+  const subtotal = completed?.subtotal ?? items.reduce((sum, item) => sum + item.price * item.qty, 0);
+  const discountPct = completed?.discountPct ?? currentDiscount();
+  const discountAmount = completed?.discountAmount ?? subtotal * discountPct / 100;
+  customerDisplayChannel.postMessage({
+    type:'customer-display-state',
+    status:completed ? 'complete' : items.length ? 'active' : 'idle',
+    items,
+    subtotal,
+    discountPct,
+    discountAmount,
+    total:completed?.total ?? subtotal - discountAmount,
+    paymentMethod:completed?.paymentMethod ?? document.querySelector('#payment-method').value,
+    receiptNo:completed?.receiptNo ?? null
+  });
 }
 
 document.querySelector('#check-member').addEventListener('click', lookupMember);
 document.querySelector('#member-number').addEventListener('keydown', e => { if(e.key==='Enter'){ e.preventDefault(); lookupMember(); } });
+document.querySelector('#payment-method').addEventListener('change', updateSummary);
 
 async function lookupMember() {
   const value = document.querySelector('#member-number').value.trim().toUpperCase();
@@ -1034,6 +1080,20 @@ async function checkout() {
     const { error: lineError } = await db.from('sale_items').insert(lineRows);
     if (lineError) throw lineError;
     toast(`Transaksi ${receipt} berhasil disimpan.`, 'success');
+    state.lastCompletedSale = {
+      receiptNo:receipt,
+      items:state.cart.map(item => ({
+        name:item.product.name,
+        price:Number(item.product.price),
+        qty:item.qty,
+        imageUrl:productImageUrl(item.product)
+      })),
+      subtotal,
+      discountPct,
+      discountAmount,
+      total,
+      paymentMethod:payment
+    };
     state.cart = []; state.memberLookup=null; document.querySelector('#member-number').value=''; document.querySelector('#member-status').textContent='Belum ada member.'; renderCart();
     await loadAll();
   } catch (err) {
