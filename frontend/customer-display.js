@@ -1,4 +1,4 @@
-const displayChannelName = 'brew-benefits-customer-display';
+const displayChannelName = 'marwid-coffee-space-customer-display';
 const displayChannel = 'BroadcastChannel' in window ? new BroadcastChannel(displayChannelName) : null;
 const displayMoney = amount => new Intl.NumberFormat('id-ID', {
   style:'currency',
