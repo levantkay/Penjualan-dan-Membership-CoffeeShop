@@ -19,9 +19,9 @@ Sistem informasi akuntansi mini untuk coffee shop yang memadukan **penjualan das
 - Penjualan: pilih produk, masukkan membership (opsional), hitung diskon otomatis, pilih pembayaran, simpan transaksi.
 - Membership: pelanggan diidentifikasi hanya dengan **membership number**; tidak ada nama, alamat, telepon, atau email pada desain database.
 - Benefit bertingkat berdasarkan lama keanggotaan:
-  - Bronze: < 3 bulan → 5%
-  - Silver: 3–< 6 bulan → 10%
-  - Gold: ≥ 6 bulan → 15%
+  - Bronze: 0–2 bulan dibayar → 5%
+  - Silver: 3–5 bulan dibayar → 10%
+  - Gold: ≥ 6 bulan dibayar → 15%
 - Database: Supabase PostgreSQL.
 - Entitas operasional POS dan Membership: **4 tabel** — members, products, sales, sale_items. Accounting menambahkan `chart_of_accounts`, `journal_entries`, dan `journal_lines`.
 
@@ -36,6 +36,7 @@ coffee_membership_system/
 │   └── customer-display.js
 └── backend/
     ├── schema.sql
+    ├── membership_tier_reactivation_migration.sql
     ├── accounting_migration.sql
     └── config.js
     
@@ -44,13 +45,14 @@ coffee_membership_system/
 ## Setup Supabase
 1. Buat project di Supabase.
 2. Buka SQL Editor dan jalankan `backend/schema.sql` untuk membuat schema, alur iuran membership, dan fungsi pengelolaan transaksi/produk.
-3. Jalankan `backend/product_images_migration.sql` untuk menambahkan path gambar dan bucket Supabase Storage. Migration ini tidak menghapus produk yang ada.
-4. Jalankan `backend/accounting_migration.sql` untuk menambahkan data akun internal dan jurnal otomatis dari transaksi penjualan serta membership. Tanggal jurnal memakai zona waktu bisnis `Asia/Jakarta`; migration dapat dijalankan ulang untuk menyelaraskan tanggal dan nomor jurnal lama tanpa mengubah timestamp sumber.
-5. Isi `backend/config.js` dengan `SUPABASE_URL` dan `SUPABASE_ANON_KEY`.
-6. Jalankan project dari root folder melalui static server, misalnya `python -m http.server 5500`.
-7. Buka `http://localhost:5500/frontend/`.
+3. Jalankan `backend/membership_tier_reactivation_migration.sql` untuk mencatat tenure dari periode pembayaran, memperbarui diskon di database, dan menambahkan dua pilihan reaktivasi. Migration ini aman dijalankan ulang dan mempertahankan seluruh riwayat.
+4. Jalankan `backend/product_images_migration.sql` untuk menambahkan path gambar dan bucket Supabase Storage. Migration ini tidak menghapus produk yang ada.
+5. Jalankan `backend/accounting_migration.sql` untuk menambahkan data akun internal dan jurnal otomatis dari transaksi penjualan serta membership. Tanggal jurnal memakai zona waktu bisnis `Asia/Jakarta`; migration dapat dijalankan ulang untuk menyelaraskan tanggal dan nomor jurnal lama tanpa mengubah timestamp sumber.
+6. Isi `backend/config.js` dengan `SUPABASE_URL` dan `SUPABASE_ANON_KEY`.
+7. Jalankan project dari root folder melalui static server, misalnya `python -m http.server 5500`.
+8. Buka `http://localhost:5500/frontend/`.
 
-Untuk project Supabase yang sudah berjalan, jalankan `backend/product_images_migration.sql` jika belum diterapkan dan jalankan ulang `backend/accounting_migration.sql` untuk menyelaraskan tanggal jurnal. Migration ini tidak mengubah timestamp penjualan atau pembayaran membership. Hindari menjalankan ulang seed `schema.sql` pada database produksi. Member lama tetap memiliki status dan tanggal bergabung yang sama; kolom iuran sampai akan menampilkan **Belum tercatat** sampai pembayaran pertamanya dicatat. Produk lama tetap dipertahankan dan produk katalog yang dikenal mendapat foto Unsplash bawaan.
+Untuk project Supabase yang sudah berjalan, jalankan `backend/membership_tier_reactivation_migration.sql` beserta migration lain yang belum diterapkan. Migration membership menghitung bulan dibayar dari riwayat pembayaran yang tersimpan dan mempertahankan status, nomor, tanggal registrasi, serta transaksi historis. Member tanpa pembayaran tercatat tidak memperoleh tenure dari tanggal bergabung. Hindari menjalankan ulang seed `schema.sql` pada database produksi. Produk lama tetap dipertahankan dan produk katalog yang dikenal mendapat foto Unsplash bawaan.
 
 Gambar produk baru wajib diunggah sebagai JPG, JPEG, PNG, atau WEBP (maksimal 5 MB). File disimpan di bucket `product-images`; path-nya tersimpan di produk agar gambar tetap tersedia setelah aplikasi dimuat ulang. Saat mengedit produk, gambar sebelumnya dipertahankan jika tidak memilih pengganti.
 
@@ -61,7 +63,7 @@ Anon key memang digunakan di browser. Untuk tugas/demo, RLS pada SQL diaktifkan 
 1. Kasir membuka menu **Penjualan**.
 2. Memilih produk dan jumlah.
 3. (Opsional) memasukkan Membership Number.
-4. Sistem mengecek masa membership dan menentukan tier + diskon.
+4. Sistem menampilkan tier dari bulan membership yang sudah dibayar; database menghitung ulang diskon saat transaksi disimpan.
 5. Subtotal → diskon → total dihitung.
 6. Kasir memilih metode pembayaran.
 7. Sistem menyimpan satu baris `sales` dan beberapa baris `sale_items`.
@@ -81,7 +83,7 @@ Anon key memang digunakan di browser. Untuk tugas/demo, RLS pada SQL diaktifkan 
 | sale_items | rincian produk tiap transaksi | id, sale_id, product_id |
 
 ## Kenapa hanya 4 entitas operasional?
-Level membership tidak dibuat sebagai tabel sendiri. Tier dan discount dihitung dari `joined_at` melalui view `v_membership`/logika frontend. Ini membuat desain lebih ringan dan tetap menunjukkan konsep relasi, transaksi header-detail, serta perhitungan benefit.
+Level membership tidak dibuat sebagai tabel sendiri. Jumlah periode dibayar dan tanggal siklus aktif disimpan pada `members`, sementara view `v_membership` menghitung tier dari jumlah bulan dibayar. Trigger database juga memvalidasi diskon POS dari tier tersebut saat transaksi dibuat atau dikoreksi.
 
 ## Modul UI
 **Dashboard** menampilkan total penjualan hari ini, jumlah transaksi, member aktif, average ticket, grafik penjualan 7 hari, komposisi tier, dan transaksi terbaru.
@@ -92,9 +94,9 @@ Level membership tidak dibuat sebagai tabel sendiri. Tier dan discount dihitung 
 
 **Membership** menampilkan directory anonim, pencarian membership number, tenure, tier, discount, dan form penambahan member.
 
-Nomor membership dan tanggal bergabung dapat dikoreksi melalui tombol **Edit**. Perubahan tanggal akan menghitung ulang tenure dan tier; catatan pembayaran yang sudah tersimpan tidak diubah. Membership tanpa transaksi atau pembayaran dapat dihapus; yang memiliki riwayat hanya dapat dinonaktifkan.
+Nomor membership dan tanggal bergabung dapat dikoreksi melalui tombol **Edit**. Tanggal bergabung adalah catatan historis dan tidak mengubah tenure/tier; catatan pembayaran yang sudah tersimpan juga tidak diubah. Membership tanpa transaksi atau pembayaran dapat dihapus; yang memiliki riwayat hanya dapat dinonaktifkan.
 
-**Iuran membership**: member baru membayar Rp35.000 untuk bulan pertama. Member aktif dapat membayar iuran satu bulan dari tabel Membership. Mengaktifkan kembali member INACTIVE menagih Rp35.000 iuran + Rp10.000 biaya reaktivasi. Tanggal bergabung tidak berubah sehingga masa membership dan tier tetap berlanjut. Status aktif/nonaktif, periode iuran, dan riwayat pembayaran tersimpan pada entitas `members` melalui RPC Supabase; perubahan status ke INACTIVE tidak mengenakan biaya. Riwayat menyimpan receipt, jenis pembayaran, nominal, metode, dan periode yang dibayar. Tarif dapat disesuaikan melalui fungsi SQL `get_membership_fees`.
+**Iuran membership**: member baru membayar satu periode; tiap pembayaran bulanan berhasil menambah satu bulan tenure. Member aktif dapat membayar satu bulan iuran. Saat reaktivasi, kasir memilih **Bayar Tunggakan** (seluruh periode sejak tanggal terakhir dibayar, ditambah biaya reaktivasi) atau **Mulai Ulang** (satu bulan ditambah biaya reaktivasi dan tier Bronze dengan tenure 0). Jika tidak ada tanggal pembayaran terakhir, pilihan bayar tunggakan tidak tersedia. Tanggal registrasi asli dan seluruh pembayaran sebelumnya tetap tersimpan. Periode, tenure, metode reaktivasi, total pembayaran, status, dan perhitungan diskon POS diproses/validasi oleh RPC dan trigger Supabase. Riwayat pembayaran otomatis membentuk jurnal; receipt jurnal unik mencegah duplikasi. Tarif dapat disesuaikan melalui fungsi SQL `get_membership_fees`.
 
 Dashboard membaca entitas `sales` untuk ringkasan penjualan. Halaman **Transaction History** menggabungkan transaksi POS dari `sales` dengan pembayaran registrasi, perpanjangan, dan reaktivasi dari `members.membership_payments`. Riwayat ini read-only dan menyediakan filter Sales/Membership serta detail sesuai jenis transaksi.
 
