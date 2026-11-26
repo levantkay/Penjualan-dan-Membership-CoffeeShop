@@ -229,12 +229,8 @@ if (customerDisplayChannel) {
   };
 }
 
-function membershipRule(joinedAt) {
-  const joined = new Date(joinedAt);
-  const now = new Date();
-  let months = (now.getFullYear() - joined.getFullYear()) * 12 + (now.getMonth() - joined.getMonth());
-  if (now.getDate() < joined.getDate()) months -= 1;
-  months = Math.max(0, months);
+function membershipRule(completedPaidMonths) {
+  const months = Math.max(0, Number(completedPaidMonths) || 0);
   if (months < 3) return { months, tier:'BRONZE', discount:5 };
   if (months < 6) return { months, tier:'SILVER', discount:10 };
   return { months, tier:'GOLD', discount:15 };
@@ -251,24 +247,26 @@ async function loadAll() {
     return;
   }
   try {
-    const [{ data: products, error: pErr }, { data: members, error: mErr }, sales, { data: fees, error: feeErr }] = await Promise.all([
+    const [{ data: products, error: pErr }, { data: members, error: mErr }, sales, { data: fees, error: feeErr }, { error: tierMigrationErr }] = await Promise.all([
       db.from('products').select('*').order('category').order('name'),
       db.from('members').select('*').order('joined_at', { ascending:false }),
       loadSalesHistory(),
-      db.rpc('get_membership_fees').single()
+      db.rpc('get_membership_fees').single(),
+      db.rpc('membership_tier_migration_status')
     ]);
     if (pErr) throw pErr;
     if (mErr) throw mErr;
     state.products = products || [];
     state.members = members || [];
     state.sales = sales || [];
-    state.membershipBillingReady = !feeErr;
+    state.membershipBillingReady = !feeErr && !tierMigrationErr;
     if (feeErr) {
       state.membershipFees = { monthly:35000, reactivation:10000 };
-      toast('Jalankan backend/membership_billing_migration.sql di Supabase untuk mengaktifkan iuran dan perubahan status.', 'warn');
+      toast('Jalankan migration membership billing di Supabase untuk mengaktifkan pembayaran iuran.', 'warn');
     } else {
       state.membershipFees = { monthly:Number(fees.monthly_fee), reactivation:Number(fees.reactivation_fee) };
     }
+    if (tierMigrationErr) toast('Jalankan backend/membership_tier_reactivation_migration.sql di Supabase untuk mengaktifkan tier dan reaktivasi baru.', 'warn');
     renderAll();
     await loadAccountingData();
   } catch (err) {
@@ -957,7 +955,7 @@ async function showTransactionDetail(transactionId) {
     document.querySelector('#sale-detail-title').textContent = transaction.receiptNo
       ? `Marwid Coffee and Space · Receipt ${transaction.receiptNo}`
       : 'Marwid Coffee and Space · Membership Payment';
-    content.innerHTML = `<p class="micro-copy">${dateTimeFmt(transaction.date)}</p><div class="membership-payment-summary"><div><span>Membership No.</span><b>${escapeHtml(transaction.memberNumber)}</b></div><div><span>Transaction Type</span><b>${escapeHtml(transaction.label)}</b></div><div><span>Payment Method</span><b>${escapeHtml(transaction.paymentMethod)}</b></div><div class="summary-total"><span>Payment Amount</span><strong>${money(transaction.amount)}</strong></div>${payment.coverage_start || payment.coverage_end ? `<p class="micro-copy">Coverage: ${payment.coverage_start ? dateFmt(payment.coverage_start) : '—'} – ${payment.coverage_end ? dateFmt(payment.coverage_end) : '—'}</p>` : ''}</div>`;
+    content.innerHTML = `<p class="micro-copy">${dateTimeFmt(transaction.date)}</p><div class="membership-payment-summary"><div><span>Membership No.</span><b>${escapeHtml(transaction.memberNumber)}</b></div><div><span>Transaction Type</span><b>${escapeHtml(transaction.label)}</b></div>${payment.reactivation_method ? `<div><span>Reactivation Method</span><b>${payment.reactivation_method === 'SETTLE' ? 'Pay Outstanding Fees' : 'Restart Membership'}</b></div>` : ''}${payment.coverage_months !== undefined ? `<div><span>Months Covered</span><b>${Number(payment.coverage_months)} month(s)</b></div>` : ''}<div><span>Payment Method</span><b>${escapeHtml(transaction.paymentMethod)}</b></div><div class="summary-total"><span>Payment Amount</span><strong>${money(transaction.amount)}</strong></div>${payment.coverage_start || payment.coverage_end ? `<p class="micro-copy">Coverage: ${payment.coverage_start ? dateFmt(payment.coverage_start) : '—'} – ${payment.coverage_end ? dateFmt(payment.coverage_end) : '—'}</p>` : ''}</div>`;
     openModal('sale-detail-modal');
     return;
   }
@@ -1048,7 +1046,7 @@ async function lookupMember() {
   const local = state.members.find(m => m.membership_number.toUpperCase() === value);
   if (!local) { state.memberLookup=null; status.innerHTML='<span class="status-error">Membership number tidak ditemukan.</span>'; updateSummary(); return; }
   if (local.status !== 'ACTIVE') { state.memberLookup=null; status.innerHTML='<span class="status-error">Membership tidak aktif.</span>'; updateSummary(); return; }
-  const rule = membershipRule(local.joined_at);
+  const rule = membershipRule(local.completed_paid_months);
   state.memberLookup = { ...local, rule };
   status.innerHTML = `<span class="status-success">✓ ${escapeHtml(local.membership_number)} · ${rule.tier} · Diskon ${rule.discount}%</span>`;
   updateSummary();
@@ -1088,10 +1086,10 @@ async function checkout() {
         qty:item.qty,
         imageUrl:productImageUrl(item.product)
       })),
-      subtotal,
-      discountPct,
-      discountAmount,
-      total,
+      subtotal:Number(sale.subtotal),
+      discountPct:Number(sale.discount_pct),
+      discountAmount:Number(sale.discount_amount),
+      total:Number(sale.total),
       paymentMethod:payment
     };
     state.cart = []; state.memberLookup=null; document.querySelector('#member-number').value=''; document.querySelector('#member-status').textContent='Belum ada member.'; renderCart();
@@ -1109,7 +1107,7 @@ function renderMembers() {
     .sort((left, right) => left.membership_number.localeCompare(right.membership_number, undefined, { numeric:true, sensitivity:'base' }));
   document.querySelector('#new-member-fee').textContent = money(state.membershipFees.monthly);
   document.querySelector('#members-body').innerHTML = rows.map(m => {
-    const r = membershipRule(m.joined_at);
+    const r = membershipRule(m.completed_paid_months);
     const action = m.status === 'ACTIVE'
       ? `<button class="text-button" data-renew-member="${escapeHtml(m.id)}">Bayar iuran</button><button class="text-button status-action" data-deactivate-member="${escapeHtml(m.id)}">Nonaktifkan</button>`
       : `<button class="text-button" data-reactivate-member="${escapeHtml(m.id)}">Aktifkan kembali</button>`;
@@ -1122,23 +1120,79 @@ function renderMembers() {
 }
 document.querySelector('#member-search').addEventListener('input', renderMembers);
 
-function openMembershipPayment(memberId, paymentType) {
+async function openMembershipPayment(memberId, paymentType) {
   const member = state.members.find(item => item.id === memberId);
   if (!member) return;
-  state.pendingMembershipAction = { memberId, paymentType };
-  const monthly = state.membershipFees.monthly;
-  const reactivation = paymentType === 'REACTIVATION' ? state.membershipFees.reactivation : 0;
-  const total = monthly + reactivation;
-  document.querySelector('#membership-payment-title').textContent = paymentType === 'REACTIVATION' ? 'Aktifkan kembali membership' : 'Bayar iuran membership';
-  document.querySelector('#membership-payment-summary').innerHTML = `<p><b>${escapeHtml(member.membership_number)}</b></p><div><span>Iuran 1 bulan</span><b>${money(monthly)}</b></div>${reactivation ? `<div><span>Biaya aktivasi ulang</span><b>${money(reactivation)}</b></div>` : ''}<div class="summary-total"><span>Total pembayaran</span><strong>${money(total)}</strong></div>${reactivation ? '<p class="micro-copy">Tanggal bergabung dan masa membership tetap berlanjut, tidak direset.</p>' : ''}`;
+  if (!configured || !state.membershipBillingReady) {
+    toast('Jalankan migration membership billing dan tier di Supabase terlebih dahulu.', 'warn');
+    return;
+  }
+  state.pendingMembershipAction = { memberId, paymentType, reactivationMethod:null };
+  document.querySelector('#membership-payment-title').textContent = paymentType === 'REACTIVATION' ? 'Pilih cara mengaktifkan kembali' : 'Bayar iuran membership';
   document.querySelector('#membership-payment-message').textContent = '';
+  const summary = document.querySelector('#membership-payment-summary');
+  const submit = document.querySelector('#membership-payment-submit');
+  if (paymentType === 'REACTIVATION') {
+    submit.disabled = true;
+    summary.innerHTML = '<p class="micro-copy">Menghitung periode iuran berdasarkan pembayaran terakhir…</p>';
+    openModal('membership-payment-modal');
+    try {
+      const { data: options, error } = await db.rpc('get_membership_reactivation_options', { p_member_id:memberId });
+      if (error) throw error;
+      const lastPaidThrough = options.last_paid_through ? dateFmt(options.last_paid_through) : 'Belum ada pembayaran tercatat';
+      summary.innerHTML = `<p><b>${escapeHtml(member.membership_number)}</b></p>
+        <div class="reactivation-options" role="radiogroup" aria-label="Metode reaktivasi">
+          <label class="reactivation-card ${options.settle_available ? '' : 'unavailable'}">
+            <input type="radio" name="reactivation-method" value="SETTLE" ${options.settle_available ? '' : 'disabled'}>
+            <span class="reactivation-card-content">
+              <b>A. Bayar Tunggakan</b>
+              <small>Pertahankan kesinambungan membership dan riwayat benefit sebelumnya.</small>
+              <span><span>Tunggakan</span><b>${Number(options.outstanding_months)} bulan</b></span>
+              <span><span>Iuran bulanan</span><b>${money(options.monthly_fee)}</b></span>
+              <span><span>Iuran tunggakan</span><b>${money(options.settle_subscription_fee)}</b></span>
+              <span><span>Biaya reaktivasi</span><b>${money(options.reactivation_fee)}</b></span>
+              <span class="reactivation-total"><span>Total pembayaran</span><b>${money(options.settle_total)}</b></span>
+              <small>Iuran terakhir sampai: ${escapeHtml(lastPaidThrough)}${options.settle_available ? '' : ' · Tanpa riwayat pembayaran, pilih mulai ulang.'}</small>
+            </span>
+          </label>
+          <label class="reactivation-card">
+            <input type="radio" name="reactivation-method" value="RESTART">
+            <span class="reactivation-card-content">
+              <b>B. Mulai Ulang Membership</b>
+              <small>Mulai siklus benefit baru. Pembayaran lama tetap disimpan sebagai riwayat.</small>
+              <span><span>Iuran 1 bulan</span><b>${money(options.monthly_fee)}</b></span>
+              <span><span>Biaya reaktivasi</span><b>${money(options.reactivation_fee)}</b></span>
+              <span class="reactivation-total"><span>Total pembayaran</span><b>${money(options.restart_total)}</b></span>
+              <span><span>Tier benefit baru</span><b>Bronze · Diskon 5%</b></span>
+            </span>
+          </label>
+        </div>`;
+      summary.querySelectorAll('[name="reactivation-method"]').forEach(input => input.addEventListener('change', () => {
+        state.pendingMembershipAction.reactivationMethod = input.value;
+        summary.querySelectorAll('.reactivation-card').forEach(card => card.classList.toggle(
+          'selected',
+          card.querySelector('[name="reactivation-method"]').value === input.value
+        ));
+        submit.disabled = false;
+      }));
+    } catch (err) {
+      console.error(err);
+      summary.innerHTML = `<p class="form-message error">Gagal menghitung opsi reaktivasi: ${escapeHtml(err.message)}</p>`;
+      document.querySelector('#membership-payment-message').textContent = 'Periksa migration membership tier/reactivation di Supabase.';
+      document.querySelector('#membership-payment-message').className = 'form-message error';
+    }
+    return;
+  }
+  const monthly = state.membershipFees.monthly;
+  summary.innerHTML = `<p><b>${escapeHtml(member.membership_number)}</b></p><div><span>Iuran 1 bulan</span><b>${money(monthly)}</b></div><div class="summary-total"><span>Total pembayaran</span><strong>${money(monthly)}</strong></div>`;
+  submit.disabled = false;
   openModal('membership-payment-modal');
 }
 
 async function deactivateMember(memberId) {
   const member = state.members.find(item => item.id === memberId);
   if (!member || !window.confirm(`Nonaktifkan membership ${member.membership_number}?`)) return;
-  if (!configured || !state.membershipBillingReady) { toast('Jalankan membership_billing_migration.sql di Supabase terlebih dahulu.', 'warn'); return; }
+  if (!configured || !state.membershipBillingReady) { toast('Jalankan migration membership billing dan tier di Supabase terlebih dahulu.', 'warn'); return; }
   try {
     const { error } = await db.rpc('change_membership_status', { p_member_id:memberId, p_status:'INACTIVE', p_payment_method:null });
     if (error) throw error;
@@ -1154,14 +1208,14 @@ document.querySelector('#membership-payment-submit').addEventListener('click', a
   const action = state.pendingMembershipAction;
   const message = document.querySelector('#membership-payment-message');
   if (!action) return;
-  if (!configured || !state.membershipBillingReady) { message.textContent = 'Jalankan membership_billing_migration.sql di Supabase terlebih dahulu.'; message.className = 'form-message warn'; return; }
+  if (!configured || !state.membershipBillingReady) { message.textContent = 'Jalankan migration membership billing dan tier di Supabase terlebih dahulu.'; message.className = 'form-message warn'; return; }
   const submit = document.querySelector('#membership-payment-submit');
   submit.disabled = true;
   message.textContent = '';
   try {
     const paymentMethod = document.querySelector('#membership-payment-method').value;
     const result = action.paymentType === 'REACTIVATION'
-      ? await db.rpc('change_membership_status', { p_member_id:action.memberId, p_status:'ACTIVE', p_payment_method:paymentMethod })
+      ? await db.rpc('reactivate_membership', { p_member_id:action.memberId, p_payment_method:paymentMethod, p_reactivation_method:action.reactivationMethod })
       : await db.rpc('renew_membership', { p_member_id:action.memberId, p_payment_method:paymentMethod });
     if (result.error) throw result.error;
     closeModal('membership-payment-modal');
@@ -1352,7 +1406,7 @@ function drawCharts() {
     salesByDay.push({label,val});
   }
   const counts = { BRONZE:0, SILVER:0, GOLD:0 };
-  state.members.filter(m=>m.status==='ACTIVE').forEach(m=>counts[membershipRule(m.joined_at).tier]++);
+  state.members.filter(m=>m.status==='ACTIVE').forEach(m=>counts[membershipRule(m.completed_paid_months).tier]++);
   const Chart = window.Chart;
   if (!Chart) return;
   if (state.charts.sales) state.charts.sales.destroy();
@@ -1395,7 +1449,7 @@ document.querySelector('#member-form').addEventListener('submit', async e => {
   e.preventDefault();
   const fd = new FormData(e.target);
   if (!configured) { document.querySelector('#member-form-message').textContent='Demo UI aktif. Hubungkan Supabase untuk menyimpan member.'; document.querySelector('#member-form-message').className='form-message warn'; return; }
-  if (!state.editingMemberId && !state.membershipBillingReady) { document.querySelector('#member-form-message').textContent='Jalankan membership_billing_migration.sql di Supabase terlebih dahulu.'; document.querySelector('#member-form-message').className='form-message warn'; return; }
+  if (!state.editingMemberId && !state.membershipBillingReady) { document.querySelector('#member-form-message').textContent='Jalankan migration membership billing dan tier di Supabase terlebih dahulu.'; document.querySelector('#member-form-message').className='form-message warn'; return; }
   const submit = document.querySelector('#member-form-submit');
   submit.disabled = true;
   const message = document.querySelector('#member-form-message');
